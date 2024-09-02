@@ -1,0 +1,11 @@
+[package]
+name = "entropy-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { version = "1.0.86", features = ["backtrace"] }
+bytes = "1.7.1"
+ed25519-dalek = "2.1.1"
+merkle = { version = "1.4.2", package = "rs_merkle" }
+rand = "0.8.5"
