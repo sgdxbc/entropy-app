@@ -3,6 +3,10 @@ name = "entropy-app"
 version = "0.1.0"
 edition = "2021"
 
+[[bench]]
+name = "block"
+harness = false
+
 [dependencies]
 anyhow = { version = "1.0.86", features = ["backtrace"] }
 bytes = "1.7.1"
@@ -10,3 +14,6 @@ derive_more = { version = "1.0.0", features = ["deref", "deref_mut"] }
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 merkle = { version = "1.4.2", package = "rs_merkle" }
 rand = "0.8.5"
+
+[dev-dependencies]
+criterion = "0.5.1"
