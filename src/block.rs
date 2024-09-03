@@ -1,25 +1,52 @@
-use std::{collections::BTreeMap, iter::repeat_with};
+use std::{any::type_name, collections::BTreeMap, fmt::Debug, iter::repeat_with};
 
 use bytes::Bytes;
+use derive_more::{Deref, DerefMut};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
-use merkle::{algorithms::Sha256, Hasher, MerkleProof, MerkleTree};
+use merkle::{algorithms::Sha256, Hasher, MerkleTree};
 use rand::{seq::IteratorRandom, Rng};
 
-type Chunk = (Bytes, MerkleProof<Sha256>);
+// if later contribute to rs_merkle crate, remember to add `Clone` and `Debug`
+//impl for MerkleProof
+#[derive(Deref, DerefMut)]
+pub struct MerkleProof(merkle::MerkleProof<Sha256>);
+
+impl Debug for MerkleProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct(type_name::<Self>()).finish_non_exhaustive()
+    }
+}
+
+impl Clone for MerkleProof {
+    fn clone(&self) -> Self {
+        Self(merkle::MerkleProof::new(self.proof_hashes().to_vec()))
+    }
+}
+
+impl MerkleProof {
+    fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        Ok(Self(merkle::MerkleProof::from_bytes(bytes)?))
+    }
+}
+
+type Chunk = (Bytes, MerkleProof);
 type MerkleHash = <Sha256 as Hasher>::Hash;
 type RootCertificate = (MerkleHash, Signature);
 
+#[derive(Debug)]
 pub struct Block {
     chunks: Vec<Chunk>,
     // merkle: MerkleTree<Sha256>,
     root_certificate: RootCertificate,
 }
 
+#[derive(Debug, Clone)]
 pub struct Packet {
     chunks: BTreeMap<usize, Chunk>,
     root_certificate: RootCertificate,
 }
 
+#[derive(Debug)]
 pub struct Parameters {
     pub chunk_size: usize,
     pub k: usize,
@@ -47,7 +74,7 @@ impl Block {
         let chunks = unchecked_chunks
             .into_iter()
             .enumerate()
-            .map(|(index, chunk)| (chunk, merkle.proof(&[index])))
+            .map(|(index, chunk)| (chunk, MerkleProof(merkle.proof(&[index]))))
             .collect();
         // may be possible to save a SHA512 digesting by a SHA512 merkle tree and treat root hash as
         // prehashed input for signing
@@ -66,12 +93,7 @@ impl Block {
     pub fn encode(&self, indexes: Vec<usize>) -> anyhow::Result<Packet> {
         let mut chunks = BTreeMap::new();
         for index in indexes {
-            let (buf, proof) = &self.chunks[index];
-            // if later contribute to rs_merkle crate, remember to add `Clone` impl for MerkleProof
-            let replaced = chunks.insert(
-                index,
-                (buf.clone(), MerkleProof::new(proof.proof_hashes().to_vec())),
-            );
+            let replaced = chunks.insert(index, self.chunks[index].clone());
             anyhow::ensure!(replaced.is_none(), "indexes duplicate")
         }
         Ok(Packet {
@@ -81,6 +103,7 @@ impl Block {
     }
 
     pub fn generate_with_degree(&self, degree: usize, mut rng: impl Rng) -> anyhow::Result<Packet> {
+        anyhow::ensure!(degree > 0);
         anyhow::ensure!(degree <= self.chunks.len());
         self.encode((0..self.chunks.len()).choose_multiple(&mut rng, degree))
     }
@@ -147,5 +170,56 @@ impl Packet {
             anyhow::ensure!(verified)
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::thread_rng;
+
+    use super::*;
+
+    #[test]
+    fn can_verify_valid() {
+        let p = Parameters {
+            chunk_size: 64,
+            k: 1024,
+        };
+        let mut rng = thread_rng();
+        let key = SigningKey::generate(&mut rng);
+        let block = Block::generate(&mut rng, &key, &p);
+
+        for _ in 0..10 {
+            let d = (0..p.k).choose(&mut rng).unwrap();
+            let packet = block.generate_with_degree(d, &mut rng).unwrap();
+            packet.verify(&key.verifying_key(), &p).unwrap()
+        }
+    }
+
+    #[test]
+    fn cannot_verify_invalid() {
+        let p = Parameters {
+            chunk_size: 64,
+            k: 1024,
+        };
+        let mut rng = thread_rng();
+        let key = SigningKey::generate(&mut rng);
+        let block = Block::generate(&mut rng, &key, &p);
+        let packet = block.generate_with_degree(1, &mut rng).unwrap();
+
+        let mut malformed = packet.clone();
+        let (index, chunk) = malformed.chunks.pop_first().unwrap();
+        malformed.chunks.insert(index + 1 % p.k, chunk);
+        let result = malformed.verify(&key.verifying_key(), &p);
+        assert!(result.is_err());
+
+        let mut malformed = packet.clone();
+        let entry = &mut malformed.chunks.first_entry().unwrap();
+        let (buf, _) = entry.get_mut();
+        let mut malformed_buf = buf.to_vec();
+        malformed_buf[0] = (malformed_buf[0] == 0) as _;
+        *buf = malformed_buf.into();
+        let result = malformed.verify(&key.verifying_key(), &p);
+        assert!(result.is_err());
     }
 }
