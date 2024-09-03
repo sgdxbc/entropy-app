@@ -4,7 +4,10 @@
     "dictionaryDefinitions": [],
     "dictionaries": [],
     "words": [
-        "merkle"
+        "dalek",
+        "Hasher",
+        "merkle",
+        "prehashed"
     ],
     "ignoreWords": [],
     "import": []
