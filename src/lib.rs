@@ -1,4 +1,5 @@
 pub mod block;
+pub mod broadcast; // should be pub/sub but no plan to implement topic
 
 pub fn generate_signing_key(rng: impl rand::Rng + rand::CryptoRng) -> ed25519_dalek::SigningKey {
     struct W<T>(T);
@@ -27,3 +28,5 @@ pub fn generate_signing_key(rng: impl rand::Rng + rand::CryptoRng) -> ed25519_da
 pub fn thread_rng() -> rand_stable::rngs::ThreadRng {
     rand_stable::thread_rng()
 }
+
+pub type PeerId = [u8; 32];

@@ -4,12 +4,16 @@
     "dictionaryDefinitions": [],
     "dictionaries": [],
     "words": [
+        "bincode",
         "dalek",
         "Hasher",
         "merkle",
         "prehashed",
+        "reqwest",
         "rngs",
-        "Seedable"
+        "Seedable",
+        "seqs",
+        "upcall"
     ],
     "ignoreWords": [],
     "import": []
