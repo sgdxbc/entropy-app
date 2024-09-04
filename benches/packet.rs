@@ -2,7 +2,6 @@ use std::iter::repeat_with;
 
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use ed25519_dalek::SigningKey;
 use entropy_app::block::{Block, Parameters};
 use rand::{thread_rng, RngCore as _};
 
@@ -21,7 +20,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     })
     .take(parameters.k)
     .collect::<Vec<_>>();
-    let key = SigningKey::generate(&mut rng);
+    let key = entropy_app::generate_signing_key(&mut rng);
 
     // c.bench_function("construct block", |b| {
     //     b.iter(|| black_box(Block::new(chunks.clone(), &key)))

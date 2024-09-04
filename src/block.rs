@@ -6,6 +6,8 @@ use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, Verifying
 use merkle::{algorithms::Sha256, Hasher, MerkleTree};
 use rand::{seq::IteratorRandom, Rng};
 
+pub mod distr;
+
 // if later contribute to rs_merkle crate, remember to add `Clone` and `Debug`
 //impl for MerkleProof
 #[derive(Deref, DerefMut)]
@@ -171,6 +173,22 @@ impl Packet {
         }
         Ok(())
     }
+
+    pub fn can_recover(&self, parameters: &Parameters) -> bool {
+        // probably impossible to get more than k right?
+        self.chunks.len() == parameters.k
+    }
+
+    pub fn recover(self, parameters: &Parameters) -> anyhow::Result<Block> {
+        anyhow::ensure!(self.can_recover(parameters));
+        let block = Block {
+            // self.chunks is a BTreeMap that contains key [0, k)
+            // the iteration will be in ascending order
+            chunks: self.chunks.into_values().collect(),
+            root_certificate: self.root_certificate,
+        };
+        Ok(block)
+    }
 }
 
 #[cfg(test)]
@@ -186,7 +204,7 @@ mod tests {
             k: 1024,
         };
         let mut rng = thread_rng();
-        let key = SigningKey::generate(&mut rng);
+        let key = crate::generate_signing_key(&mut rng);
         let block = Block::generate(&mut rng, &key, &p);
 
         for _ in 0..10 {
@@ -203,7 +221,7 @@ mod tests {
             k: 1024,
         };
         let mut rng = thread_rng();
-        let key = SigningKey::generate(&mut rng);
+        let key = crate::generate_signing_key(&mut rng);
         let block = Block::generate(&mut rng, &key, &p);
         let packet = block.generate_with_degree(1, &mut rng).unwrap();
 
