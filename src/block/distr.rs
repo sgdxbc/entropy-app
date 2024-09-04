@@ -6,7 +6,7 @@ use rand::{
     Rng,
 };
 
-fn p_degree_ideal(k: usize) -> Vec<f64> {
+pub fn p_degree_ideal(k: usize) -> Vec<f64> {
     let mut ps = vec![1. / k as f64];
     for i in 2..=k {
         ps.push(1. / (i * (i - 1)) as f64)
@@ -14,7 +14,7 @@ fn p_degree_ideal(k: usize) -> Vec<f64> {
     ps
 }
 
-fn p_degree(k: usize) -> Vec<f64> {
+pub fn p_degree(k: usize) -> Vec<f64> {
     let delta = 0.5;
     let c = 0.01;
 

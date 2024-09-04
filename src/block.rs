@@ -37,7 +37,7 @@ type RootCertificate = (MerkleHash, Signature);
 
 #[derive(Debug)]
 pub struct Block {
-    chunks: Vec<Chunk>,
+    pub chunks: Vec<Chunk>,
     // merkle: MerkleTree<Sha256>,
     root_certificate: RootCertificate,
 }
@@ -188,6 +188,11 @@ impl Packet {
             root_certificate: self.root_certificate,
         };
         Ok(block)
+    }
+
+    pub fn merge(&mut self, other: Self) {
+        // TODO check for same root certificate?
+        self.chunks.extend(other.chunks)
     }
 }
 
