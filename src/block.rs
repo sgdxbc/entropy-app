@@ -26,13 +26,13 @@ impl Clone for MerkleProof {
 }
 
 impl MerkleProof {
-    fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         Ok(Self(merkle::MerkleProof::from_bytes(bytes)?))
     }
 }
 
 type Chunk = (Bytes, MerkleProof);
-type MerkleHash = <Sha256 as Hasher>::Hash;
+pub type MerkleHash = primitive_types::H256;
 type RootCertificate = (MerkleHash, Signature);
 
 #[derive(Debug)]
@@ -44,8 +44,8 @@ pub struct Block {
 
 #[derive(Debug, Clone)]
 pub struct Packet {
-    chunks: BTreeMap<usize, Chunk>,
-    root_certificate: RootCertificate,
+    pub chunks: BTreeMap<usize, Chunk>,
+    pub root_certificate: RootCertificate,
 }
 
 #[derive(Debug)]
@@ -83,8 +83,8 @@ impl Block {
         // but a whole SHA512 tree is probably more expensive
         // not sure why types not check with this...
         // let signature = key.sign(&merkle.root().expect("root exists"));
-        let root_hash: MerkleHash = merkle.root().expect("root exists");
-        let signature = key.sign(&root_hash);
+        let root_hash: MerkleHash = primitive_types::H256(merkle.root().expect("root exists"));
+        let signature = key.sign(root_hash.as_bytes());
         Self {
             chunks,
             // merkle,
@@ -114,7 +114,7 @@ impl Block {
 impl Packet {
     pub fn to_bytes(&self) -> Bytes {
         let mut scratch = Vec::new();
-        scratch.extend(self.root_certificate.0);
+        scratch.extend(self.root_certificate.0.as_bytes());
         scratch.extend(self.root_certificate.1.to_bytes());
         for (index, (buf, proof)) in &self.chunks {
             scratch.extend(index.to_le_bytes());
@@ -130,6 +130,7 @@ impl Packet {
         anyhow::ensure!(bytes.len() >= size_of::<MerkleHash>());
         let mut root_hash = [0; size_of::<MerkleHash>()];
         root_hash.copy_from_slice(&bytes.split_to(Signature::BYTE_SIZE));
+        let root_hash = primitive_types::H256(root_hash);
 
         anyhow::ensure!(bytes.len() >= Signature::BYTE_SIZE);
         let mut signature_bytes = [0; Signature::BYTE_SIZE];
@@ -166,9 +167,14 @@ impl Packet {
 
     pub fn verify(&self, key: &VerifyingKey, parameters: &Parameters) -> anyhow::Result<()> {
         let (root_hash, signature) = &self.root_certificate;
-        key.verify(root_hash, signature)?;
+        key.verify(root_hash.as_bytes(), signature)?;
         for (index, (buf, proof)) in &self.chunks {
-            let verified = proof.verify(*root_hash, &[*index], &[Sha256::hash(buf)], parameters.k);
+            let verified = proof.verify(
+                *root_hash.as_fixed_bytes(),
+                &[*index],
+                &[Sha256::hash(buf)],
+                parameters.k,
+            );
             anyhow::ensure!(verified)
         }
         Ok(())
@@ -193,6 +199,14 @@ impl Packet {
     pub fn merge(&mut self, other: Self) {
         // TODO check for same root certificate?
         self.chunks.extend(other.chunks)
+    }
+
+    pub fn block_id(&self) -> MerkleHash {
+        self.root_certificate.0
+    }
+
+    pub fn signature(&self) -> Signature {
+        self.root_certificate.1
     }
 }
 

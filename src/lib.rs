@@ -1,5 +1,6 @@
 pub mod block;
 pub mod broadcast; // should be pub/sub but no plan to implement topic
+pub mod store;
 
 pub fn generate_signing_key(rng: impl rand::Rng + rand::CryptoRng) -> ed25519_dalek::SigningKey {
     struct W<T>(T);
