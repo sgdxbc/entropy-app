@@ -33,7 +33,7 @@ pub fn sha256(bytes: &[u8]) -> [u8; 32] {
 pub static CLIENT: std::sync::LazyLock<reqwest::Client> =
     std::sync::LazyLock::new(reqwest::Client::new);
 
-pub type PeerId = [u8; 32];
+pub use primitive_types::H256 as PeerId;
 
 pub struct Peer {
     // pub id: PeerId,
@@ -58,7 +58,7 @@ pub fn generate_peers(
             verifying_key: key.verifying_key(),
             addr,
         };
-        let id = sha256(peer.verifying_key.as_bytes());
+        let id = PeerId(sha256(peer.verifying_key.as_bytes()));
         let replaced = peers.insert(id, peer);
         assert!(replaced.is_none(), "peer id collision");
         signing_keys.insert(id, key);

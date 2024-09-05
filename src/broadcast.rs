@@ -99,7 +99,11 @@ impl Context {
                 continue;
             }
             if *prev_high < message.seq - 1 {
-                // TODO warning
+                println!(
+                    "missing seq {:?} from {:?}",
+                    *prev_high + 1..message.seq,
+                    message.source
+                );
             }
 
             *prev_high = message.seq;
@@ -116,6 +120,7 @@ impl Context {
         mut forward_receiver: UnboundedReceiver<Bytes>,
     ) -> anyhow::Result<()> {
         while let Some(buf) = forward_receiver.recv().await {
+            println!("forward to {endpoint}");
             CLIENT
                 .post(format!("{endpoint}/broadcast"))
                 .body(buf.clone())
@@ -205,7 +210,6 @@ impl ContextConfig {
                 }
             })
             .collect();
-        // TODO verify connectivity
         Ok(configs)
     }
 }

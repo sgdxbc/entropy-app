@@ -16,6 +16,7 @@ derive_more = { version = "1.0.0", features = ["deref", "deref_mut"] }
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 futures = "0.3.30"
 merkle = { version = "1.4.2", package = "rs_merkle" }
+primitive-types = { version = "0.12.2", features = ["serde"] }
 rand = "0.9.0-alpha"
 rand_stable = { version = "0.8.5", package = "rand" }
 reqwest = { version = "0.12.7", default-features = false, features = ["json"] }

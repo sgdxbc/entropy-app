@@ -3,7 +3,12 @@ use std::{collections::HashMap, net::SocketAddr, time::Duration};
 use axum::Router;
 use entropy_app::{broadcast, generate_peers};
 use rand::{seq::IteratorRandom, thread_rng};
-use tokio::{net::TcpListener, sync::mpsc::unbounded_channel, task::JoinSet, time::sleep};
+use tokio::{
+    net::TcpListener,
+    sync::mpsc::unbounded_channel,
+    task::JoinSet,
+    time::{sleep, timeout},
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -47,9 +52,14 @@ async fn main() -> anyhow::Result<()> {
         let addr = invokes.keys().choose(&mut rng).unwrap();
         println!("Send by {addr}");
         invokes[addr].send(Default::default())?;
-        for _ in 0..n - 1 {
-            println!("Recv {:?}", monitor_receiver.recv().await);
+        for i in 1..=n - 1 {
+            println!("[{i:3}/{n:3}] Recv {:?}", monitor_receiver.recv().await);
         }
+        println!("No more recv expected");
+        println!(
+            "{:?}",
+            timeout(Duration::from_secs(1), monitor_receiver.recv()).await
+        );
         anyhow::Ok(())
     };
     tokio::select! {
