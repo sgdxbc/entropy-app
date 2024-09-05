@@ -1,5 +1,12 @@
 use std::{collections::HashMap, iter::repeat_with};
 
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::post,
+    Router,
+};
 use bincode::Options;
 use bytes::Bytes;
 use futures::future::select_all;
@@ -15,32 +22,40 @@ pub struct Message {
     payload: Bytes,
 }
 
-pub struct State {
-    local_id: PeerId,
-    mesh: Vec<String>,
-    client: reqwest::Client,
-    upcall: UnboundedSender<Bytes>,
+pub struct ContextConfig {
+    pub local_id: PeerId,
+    pub mesh: Vec<String>,
+    pub client: reqwest::Client,
 }
 
-impl State {
-    pub async fn session(
-        &self,
-        messages: UnboundedReceiver<Message>,
-        invokes: UnboundedReceiver<Bytes>,
-    ) -> anyhow::Result<()> {
+pub struct Context {
+    config: ContextConfig,
+    upcall: UnboundedSender<Bytes>,
+    messages: UnboundedReceiver<Message>,
+    invokes: UnboundedReceiver<Bytes>,
+}
+
+impl Context {
+    pub async fn session(self) -> anyhow::Result<()> {
         let (forward_senders, forward_receivers) = repeat_with(unbounded_channel)
-            .take(self.mesh.len())
+            .take(self.config.mesh.len())
             .unzip::<_, _, Vec<_>, Vec<_>>();
-        let recv_session = self.recv_session(messages, forward_senders.clone());
+        let recv_session = Self::recv_session(self.messages, self.upcall, forward_senders.clone());
         let forward_sessions =
-            self.mesh
+            self.config
+                .mesh
                 .iter()
                 .zip(forward_receivers)
                 .map(|(endpoint, forward_receiver)| {
-                    Box::pin(self.forward_session(endpoint, forward_receiver))
+                    Box::pin(Self::forward_session(
+                        self.config.client.clone(),
+                        endpoint,
+                        forward_receiver,
+                    ))
                 });
         let forward_sessions = select_all(forward_sessions);
-        let invoke_session = self.invoke_session(invokes, forward_senders);
+        let invoke_session =
+            Self::invoke_session(self.config.local_id, self.invokes, forward_senders);
         tokio::select! {
             // is it true that both of the below sessions lead to graceful shutdown?
             result = recv_session => return result,
@@ -51,8 +66,8 @@ impl State {
     }
 
     async fn recv_session(
-        &self,
         mut messages: UnboundedReceiver<Message>,
+        upcall: UnboundedSender<Bytes>,
         forward_senders: Vec<UnboundedSender<Bytes>>,
     ) -> anyhow::Result<()> {
         // only forward messages with unseen high sequence numbers
@@ -79,7 +94,7 @@ impl State {
             }
 
             *prev_high = message.seq;
-            self.upcall.send(message.payload.clone())?;
+            upcall.send(message.payload.clone())?;
             // is there any simple way to reuse the serialized message received by this node?
             let buf = Bytes::from(bincode::options().serialize(&message)?);
             for sender in &forward_senders {
@@ -90,12 +105,12 @@ impl State {
     }
 
     async fn forward_session(
-        &self,
+        client: reqwest::Client,
         endpoint: &str,
         mut forward_receiver: UnboundedReceiver<Bytes>,
     ) -> anyhow::Result<()> {
         while let Some(buf) = forward_receiver.recv().await {
-            self.client
+            client
                 .post(format!("{endpoint}/broadcast"))
                 .body(buf.clone())
                 .send()
@@ -106,7 +121,7 @@ impl State {
     }
 
     async fn invoke_session(
-        &self,
+        local_id: PeerId,
         mut invokes: UnboundedReceiver<Bytes>,
         forward_senders: Vec<UnboundedSender<Bytes>>,
     ) -> anyhow::Result<()> {
@@ -114,7 +129,7 @@ impl State {
         while let Some(payload) = invokes.recv().await {
             seq += 1;
             let message = Message {
-                source: self.local_id,
+                source: local_id,
                 seq,
                 payload,
             };
@@ -125,4 +140,44 @@ impl State {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone)]
+struct ServerState {
+    message_sender: UnboundedSender<Message>,
+}
+
+async fn handle(State(state): State<ServerState>, body: axum::body::Bytes) -> Response {
+    let Ok(message) = bincode::deserialize(&body) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let Ok(()) = state.message_sender.send(message) else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    StatusCode::OK.into_response()
+}
+
+pub struct Api {
+    pub invoke_sender: UnboundedSender<Bytes>,
+    pub upcall: UnboundedReceiver<Bytes>,
+}
+
+pub fn make_service(config: ContextConfig) -> (Router, Context, Api) {
+    let (message_sender, message_receiver) = unbounded_channel();
+    let (invoke_sender, invoke_receiver) = unbounded_channel();
+    let (upcall_sender, upcall_receiver) = unbounded_channel();
+    let router = Router::new()
+        .route("/", post(handle))
+        .with_state(ServerState { message_sender });
+    let context = Context {
+        config,
+        upcall: upcall_sender,
+        messages: message_receiver,
+        invokes: invoke_receiver,
+    };
+    let api = Api {
+        invoke_sender,
+        upcall: upcall_receiver,
+    };
+    (router, context, api)
 }
