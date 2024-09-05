@@ -1,3 +1,4 @@
+pub mod app;
 pub mod block;
 pub mod broadcast; // should be pub/sub but no plan to implement topic
 pub mod store;
@@ -34,32 +35,32 @@ pub fn sha256(bytes: &[u8]) -> [u8; 32] {
 pub static CLIENT: std::sync::LazyLock<reqwest::Client> =
     std::sync::LazyLock::new(reqwest::Client::new);
 
-pub use primitive_types::H256 as PeerId;
+pub use primitive_types::H256 as NodeId;
 
-pub struct Peer {
+pub struct Node {
     // pub id: PeerId,
     pub verifying_key: ed25519_dalek::VerifyingKey,
     pub addr: std::net::SocketAddr,
 }
 
-pub type PeerBook = std::collections::HashMap<PeerId, Peer>;
+pub type NodeBook = std::collections::HashMap<NodeId, Node>;
 
 pub fn generate_peers(
     addrs: Vec<std::net::SocketAddr>,
     mut rng: impl rand::Rng + rand::CryptoRng,
 ) -> (
-    PeerBook,
-    std::collections::HashMap<PeerId, ed25519_dalek::SigningKey>,
+    NodeBook,
+    std::collections::HashMap<NodeId, ed25519_dalek::SigningKey>,
 ) {
-    let mut peers = PeerBook::new();
+    let mut peers = NodeBook::new();
     let mut signing_keys = std::collections::HashMap::new();
     for addr in addrs {
         let key = generate_signing_key(&mut rng);
-        let peer = Peer {
+        let peer = Node {
             verifying_key: key.verifying_key(),
             addr,
         };
-        let id = PeerId(sha256(peer.verifying_key.as_bytes()));
+        let id = NodeId(sha256(peer.verifying_key.as_bytes()));
         let replaced = peers.insert(id, peer);
         assert!(replaced.is_none(), "peer id collision");
         signing_keys.insert(id, key);
@@ -67,7 +68,7 @@ pub fn generate_peers(
     (peers, signing_keys)
 }
 
-impl Peer {
+impl Node {
     pub fn endpoint(&self) -> String {
         format!("http://{}", self.addr)
     }

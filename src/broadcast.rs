@@ -17,17 +17,17 @@ use rand::{seq::SliceRandom, Rng};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-use crate::{PeerBook, PeerId, CLIENT};
+use crate::{NodeBook, NodeId, CLIENT};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    source: PeerId,
+struct Message {
+    source: NodeId,
     seq: u32,
     payload: Bytes,
 }
 
 pub struct ContextConfig {
-    pub local_id: PeerId,
+    pub local_id: NodeId,
     pub mesh: Vec<String>,
 }
 
@@ -70,7 +70,7 @@ impl Context {
     }
 
     async fn recv_session(
-        local_id: PeerId,
+        local_id: NodeId,
         mut messages: UnboundedReceiver<Bytes>,
         upcall: UnboundedSender<Bytes>,
         forward_senders: Vec<UnboundedSender<Bytes>>,
@@ -135,7 +135,7 @@ impl Context {
     }
 
     async fn invoke_session(
-        local_id: PeerId,
+        local_id: NodeId,
         mut invokes: UnboundedReceiver<Bytes>,
         forward_senders: Vec<UnboundedSender<Bytes>>,
     ) -> anyhow::Result<()> {
@@ -195,7 +195,7 @@ pub fn make_service(config: ContextConfig) -> (Router, Context, Api) {
 
 impl ContextConfig {
     pub fn generate_network(
-        peers: &PeerBook,
+        peers: &NodeBook,
         mesh_degree: usize,
         mut rng: impl Rng,
     ) -> anyhow::Result<Vec<Self>> {
@@ -205,8 +205,8 @@ impl ContextConfig {
         anyhow::ensure!(n * mesh_degree % 2 == 0);
 
         fn suitable(
-            edges: &HashSet<(PeerId, PeerId)>,
-            potential_edges: &HashMap<PeerId, usize>,
+            edges: &HashSet<(NodeId, NodeId)>,
+            potential_edges: &HashMap<NodeId, usize>,
         ) -> bool {
             if potential_edges.is_empty() {
                 return true;
@@ -228,10 +228,10 @@ impl ContextConfig {
         }
 
         fn try_creation(
-            keys: &[PeerId],
+            keys: &[NodeId],
             d: usize,
             mut rng: impl Rng,
-        ) -> Option<HashSet<(PeerId, PeerId)>> {
+        ) -> Option<HashSet<(NodeId, NodeId)>> {
             let mut edges = HashSet::new();
             let mut stubs = keys
                 .iter()

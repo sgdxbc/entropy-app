@@ -2,6 +2,7 @@ use std::{any::type_name, collections::BTreeMap, fmt::Debug, iter::repeat_with};
 
 use bytes::Bytes;
 use derive_more::{Deref, DerefMut};
+use distr::PacketDistr;
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
 use merkle::{algorithms::Sha256, Hasher, MerkleTree};
 use rand::{seq::IteratorRandom, Rng};
@@ -92,7 +93,7 @@ impl Block {
         }
     }
 
-    pub fn encode(&self, indexes: Vec<usize>) -> anyhow::Result<Packet> {
+    pub fn encode(&self, indexes: impl IntoIterator<Item = usize>) -> anyhow::Result<Packet> {
         let mut chunks = BTreeMap::new();
         for index in indexes {
             let replaced = chunks.insert(index, self.chunks[index].clone());
@@ -104,10 +105,26 @@ impl Block {
         })
     }
 
-    pub fn generate_with_degree(&self, degree: usize, mut rng: impl Rng) -> anyhow::Result<Packet> {
+    pub fn generate_packet_with_degree(
+        &self,
+        degree: usize,
+        mut rng: impl Rng,
+    ) -> anyhow::Result<Packet> {
         anyhow::ensure!(degree > 0);
         anyhow::ensure!(degree <= self.chunks.len());
         self.encode((0..self.chunks.len()).choose_multiple(&mut rng, degree))
+    }
+
+    pub fn generate_packet(
+        &self,
+        packet_distr: &PacketDistr,
+        rng: impl Rng,
+    ) -> anyhow::Result<Packet> {
+        self.encode(packet_distr.sample(rng))
+    }
+
+    pub fn id(&self) -> MerkleHash {
+        self.root_certificate.0
     }
 }
 
@@ -228,7 +245,7 @@ mod tests {
 
         for _ in 0..10 {
             let d = (0..p.k).choose(&mut rng).unwrap();
-            let packet = block.generate_with_degree(d, &mut rng).unwrap();
+            let packet = block.generate_packet_with_degree(d, &mut rng).unwrap();
             packet.verify(&key.verifying_key(), &p).unwrap()
         }
     }
@@ -242,7 +259,7 @@ mod tests {
         let mut rng = thread_rng();
         let key = crate::generate_signing_key(&mut rng);
         let block = Block::generate(&mut rng, &key, &p);
-        let packet = block.generate_with_degree(1, &mut rng).unwrap();
+        let packet = block.generate_packet_with_degree(1, &mut rng).unwrap();
 
         let mut malformed = packet.clone();
         let (index, chunk) = malformed.chunks.pop_first().unwrap();

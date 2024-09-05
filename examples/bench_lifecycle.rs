@@ -49,7 +49,7 @@ fn main() {
     let recovered_block = loop {
         let start = Instant::now();
         let packet = block
-            .generate_with_degree(degree_distr.sample(&mut rng) + 1, &mut rng)
+            .generate_packet_with_degree(degree_distr.sample(&mut rng) + 1, &mut rng)
             .expect("can generate packet");
         encode += start.elapsed();
 

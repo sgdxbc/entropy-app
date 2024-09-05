@@ -33,7 +33,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::from_parameter(degree),
             &degree,
-            |b, &degree| b.iter(|| black_box(block.generate_with_degree(degree, &mut rng))),
+            |b, &degree| b.iter(|| black_box(block.generate_packet_with_degree(degree, &mut rng))),
         );
     }
     drop(group);
@@ -41,7 +41,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("verify fixed k");
     for degree in [1, 2, 4, 8] {
         group.bench_function(BenchmarkId::from_parameter(degree), |b| {
-            let packet = block.generate_with_degree(degree, &mut rng).unwrap();
+            let packet = block.generate_packet_with_degree(degree, &mut rng).unwrap();
             b.iter(|| black_box(packet.verify(&key.verifying_key(), &parameters)))
         });
     }
@@ -55,7 +55,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         };
         let block = Block::generate(&mut rng, &key, &p);
         group.bench_function(BenchmarkId::from_parameter(x * 10), |b| {
-            b.iter(|| black_box(block.generate_with_degree(1, &mut rng)))
+            b.iter(|| black_box(block.generate_packet_with_degree(1, &mut rng)))
         });
     }
     drop(group);
@@ -68,7 +68,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         };
         let block = Block::generate(&mut rng, &key, &p);
         group.bench_function(BenchmarkId::from_parameter(x * 10), |b| {
-            let packet = block.generate_with_degree(1, &mut rng).unwrap();
+            let packet = block.generate_packet_with_degree(1, &mut rng).unwrap();
             b.iter(|| black_box(packet.verify(&key.verifying_key(), &parameters)))
         });
     }

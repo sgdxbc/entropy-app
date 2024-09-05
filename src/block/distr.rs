@@ -44,11 +44,11 @@ impl PacketDistr {
         )
     }
 
-    pub fn sample(&self, rng: &mut impl Rng) -> HashSet<usize> {
-        let d = self.0.sample(rng) + 1;
+    pub fn sample(&self, mut rng: impl Rng) -> HashSet<usize> {
+        let d = self.0.sample(&mut rng) + 1;
         let mut fragment = HashSet::new();
         while fragment.len() < d {
-            fragment.insert(self.1.sample(rng));
+            fragment.insert(self.1.sample(&mut rng));
         }
         fragment
     }
