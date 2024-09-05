@@ -1,4 +1,7 @@
-use std::{collections::HashMap, iter::repeat_with};
+use std::{
+    collections::{HashMap, HashSet},
+    iter::{repeat, repeat_with},
+};
 
 use axum::{
     extract::State,
@@ -10,7 +13,7 @@ use axum::{
 use bincode::Options;
 use bytes::Bytes;
 use futures::future::select_all;
-use rand::{seq::IndexedRandom, Rng};
+use rand::{seq::SliceRandom, Rng};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
@@ -120,7 +123,7 @@ impl Context {
         mut forward_receiver: UnboundedReceiver<Bytes>,
     ) -> anyhow::Result<()> {
         while let Some(buf) = forward_receiver.recv().await {
-            println!("forward to {endpoint}");
+            // println!("forward to {endpoint}");
             CLIENT
                 .post(format!("{endpoint}/broadcast"))
                 .body(buf.clone())
@@ -196,20 +199,100 @@ impl ContextConfig {
         mesh_degree: usize,
         mut rng: impl Rng,
     ) -> anyhow::Result<Vec<Self>> {
-        anyhow::ensure!(peers.len() > mesh_degree);
-        let keys = peers.keys().copied().collect::<Vec<_>>();
-        let configs = keys
-            .iter()
-            .map(|id| {
-                let mesh_ids = repeat_with(|| keys.choose(&mut rng).expect("peer book not empty"))
-                    .filter(|mesh_id| *mesh_id != id)
-                    .take(mesh_degree);
-                Self {
-                    local_id: *id,
-                    mesh: mesh_ids.map(|id| peers[id].endpoint()).collect(),
+        anyhow::ensure!(mesh_degree >= 3);
+        let n = peers.len();
+        anyhow::ensure!(n > mesh_degree);
+        anyhow::ensure!(n * mesh_degree % 2 == 0);
+
+        fn suitable(
+            edges: &HashSet<(PeerId, PeerId)>,
+            potential_edges: &HashMap<PeerId, usize>,
+        ) -> bool {
+            if potential_edges.is_empty() {
+                return true;
+            }
+            for &s1 in potential_edges.keys() {
+                for &s2 in potential_edges.keys() {
+                    // # Two iterators on the same dictionary are guaranteed
+                    // # to visit it in the same order if there are no
+                    // # intervening modifications.
+                    if s1 == s2 {
+                        break;
+                    }
+                    if !edges.contains(&(s1.min(s2), s1.max(s2))) {
+                        return true;
+                    }
                 }
+            }
+            false
+        }
+
+        fn try_creation(
+            keys: &[PeerId],
+            d: usize,
+            mut rng: impl Rng,
+        ) -> Option<HashSet<(PeerId, PeerId)>> {
+            let mut edges = HashSet::new();
+            let mut stubs = keys
+                .iter()
+                .flat_map(|&id| repeat(id).take(d))
+                .collect::<Vec<_>>();
+            while !stubs.is_empty() {
+                let mut potential_edges = HashMap::<_, usize>::new();
+                stubs.shuffle(&mut rng);
+                for chunk in stubs.chunks_exact(2) {
+                    let &[s1, s2] = chunk else { unreachable!() };
+                    if s1 == s2 {
+                        continue;
+                    }
+                    let inserted = edges.insert((s1.min(s2), s1.max(s2)));
+                    if !inserted {
+                        *potential_edges.entry(s1).or_default() += 1;
+                        *potential_edges.entry(s2).or_default() += 1;
+                    }
+                }
+                if !suitable(&edges, &potential_edges) {
+                    return None;
+                }
+                stubs = potential_edges
+                    .into_iter()
+                    .flat_map(|(id, potential)| repeat(id).take(potential))
+                    .collect()
+            }
+            Some(edges)
+        }
+
+        let keys = peers.keys().copied().collect::<Vec<_>>();
+        let edges = loop {
+            if let Some(edges) = try_creation(&keys, mesh_degree, &mut rng) {
+                break edges;
+            }
+        };
+        // assert_eq!(edges.len(), mesh_degree * n / 2);
+        let mut configs = keys
+            .iter()
+            .map(|&id| {
+                (
+                    id,
+                    Self {
+                        local_id: id,
+                        mesh: Default::default(),
+                    },
+                )
             })
-            .collect();
-        Ok(configs)
+            .collect::<HashMap<_, _>>();
+        for (id1, id2) in edges {
+            configs
+                .get_mut(&id1)
+                .unwrap()
+                .mesh
+                .push(peers[&id2].endpoint());
+            configs
+                .get_mut(&id2)
+                .unwrap()
+                .mesh
+                .push(peers[&id1].endpoint());
+        }
+        Ok(configs.into_values().collect())
     }
 }
