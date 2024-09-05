@@ -10,10 +10,11 @@ use axum::{
 use bincode::Options;
 use bytes::Bytes;
 use futures::future::select_all;
+use rand::{seq::IndexedRandom, Rng};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-use crate::PeerId;
+use crate::{PeerBook, PeerId, CLIENT};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -25,13 +26,12 @@ pub struct Message {
 pub struct ContextConfig {
     pub local_id: PeerId,
     pub mesh: Vec<String>,
-    pub client: reqwest::Client,
 }
 
 pub struct Context {
     config: ContextConfig,
     upcall: UnboundedSender<Bytes>,
-    messages: UnboundedReceiver<Message>,
+    messages: UnboundedReceiver<Bytes>,
     invokes: UnboundedReceiver<Bytes>,
 }
 
@@ -40,18 +40,19 @@ impl Context {
         let (forward_senders, forward_receivers) = repeat_with(unbounded_channel)
             .take(self.config.mesh.len())
             .unzip::<_, _, Vec<_>, Vec<_>>();
-        let recv_session = Self::recv_session(self.messages, self.upcall, forward_senders.clone());
+        let recv_session = Self::recv_session(
+            self.config.local_id,
+            self.messages,
+            self.upcall,
+            forward_senders.clone(),
+        );
         let forward_sessions =
             self.config
                 .mesh
                 .iter()
                 .zip(forward_receivers)
                 .map(|(endpoint, forward_receiver)| {
-                    Box::pin(Self::forward_session(
-                        self.config.client.clone(),
-                        endpoint,
-                        forward_receiver,
-                    ))
+                    Box::pin(Self::forward_session(endpoint, forward_receiver))
                 });
         let forward_sessions = select_all(forward_sessions);
         let invoke_session =
@@ -66,7 +67,8 @@ impl Context {
     }
 
     async fn recv_session(
-        mut messages: UnboundedReceiver<Message>,
+        local_id: PeerId,
+        mut messages: UnboundedReceiver<Bytes>,
         upcall: UnboundedSender<Bytes>,
         forward_senders: Vec<UnboundedSender<Bytes>>,
     ) -> anyhow::Result<()> {
@@ -84,7 +86,14 @@ impl Context {
         // have consecutive sequence numbers. not very sure so just produce a warning for now. hope
         // it to be so
         let mut high_seqs = HashMap::<_, u32>::new();
-        while let Some(message) = messages.recv().await {
+        while let Some(buf) = messages.recv().await {
+            let Ok(message) = bincode::options().deserialize::<Message>(&buf) else {
+                println!("malformed broadcast");
+                continue;
+            };
+            if message.source == local_id {
+                continue;
+            }
             let prev_high = high_seqs.entry(message.source).or_default();
             if *prev_high >= message.seq {
                 continue;
@@ -95,8 +104,6 @@ impl Context {
 
             *prev_high = message.seq;
             upcall.send(message.payload.clone())?;
-            // is there any simple way to reuse the serialized message received by this node?
-            let buf = Bytes::from(bincode::options().serialize(&message)?);
             for sender in &forward_senders {
                 sender.send(buf.clone())?;
             }
@@ -105,12 +112,11 @@ impl Context {
     }
 
     async fn forward_session(
-        client: reqwest::Client,
         endpoint: &str,
         mut forward_receiver: UnboundedReceiver<Bytes>,
     ) -> anyhow::Result<()> {
         while let Some(buf) = forward_receiver.recv().await {
-            client
+            CLIENT
                 .post(format!("{endpoint}/broadcast"))
                 .body(buf.clone())
                 .send()
@@ -144,15 +150,12 @@ impl Context {
 
 #[derive(Debug, Clone)]
 struct ServerState {
-    message_sender: UnboundedSender<Message>,
+    message_sender: UnboundedSender<Bytes>,
 }
 
 async fn handle(State(state): State<ServerState>, body: axum::body::Bytes) -> Response {
-    let Ok(message) = bincode::deserialize(&body) else {
-        return StatusCode::BAD_REQUEST.into_response();
-    };
-    let Ok(()) = state.message_sender.send(message) else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    let Ok(()) = state.message_sender.send(body) else {
+        return StatusCode::IM_A_TEAPOT.into_response();
     };
     StatusCode::OK.into_response()
 }
@@ -180,4 +183,29 @@ pub fn make_service(config: ContextConfig) -> (Router, Context, Api) {
         upcall: upcall_receiver,
     };
     (router, context, api)
+}
+
+impl ContextConfig {
+    pub fn generate_network(
+        peers: &PeerBook,
+        mesh_degree: usize,
+        mut rng: impl Rng,
+    ) -> anyhow::Result<Vec<Self>> {
+        anyhow::ensure!(peers.len() > mesh_degree);
+        let keys = peers.keys().copied().collect::<Vec<_>>();
+        let configs = keys
+            .iter()
+            .map(|id| {
+                let mesh_ids = repeat_with(|| keys.choose(&mut rng).expect("peer book not empty"))
+                    .filter(|mesh_id| *mesh_id != id)
+                    .take(mesh_degree);
+                Self {
+                    local_id: *id,
+                    mesh: mesh_ids.map(|id| peers[id].endpoint()).collect(),
+                }
+            })
+            .collect();
+        // TODO verify connectivity
+        Ok(configs)
+    }
 }

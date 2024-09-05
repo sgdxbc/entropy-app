@@ -4,6 +4,7 @@
     "dictionaryDefinitions": [],
     "dictionaries": [],
     "words": [
+        "addrs",
         "bincode",
         "dalek",
         "Hasher",
@@ -13,6 +14,7 @@
         "rngs",
         "Seedable",
         "seqs",
+        "serde",
         "upcall"
     ],
     "ignoreWords": [],

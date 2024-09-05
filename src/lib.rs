@@ -25,8 +25,49 @@ pub fn generate_signing_key(rng: impl rand::Rng + rand::CryptoRng) -> ed25519_da
     ed25519_dalek::SigningKey::generate(&mut W(rng))
 }
 
-pub fn thread_rng() -> rand_stable::rngs::ThreadRng {
-    rand_stable::thread_rng()
+pub fn sha256(bytes: &[u8]) -> [u8; 32] {
+    use merkle::Hasher as _;
+    merkle::algorithms::Sha256::hash(bytes)
 }
 
+pub static CLIENT: std::sync::LazyLock<reqwest::Client> =
+    std::sync::LazyLock::new(reqwest::Client::new);
+
 pub type PeerId = [u8; 32];
+
+pub struct Peer {
+    // pub id: PeerId,
+    pub verifying_key: ed25519_dalek::VerifyingKey,
+    pub addr: std::net::SocketAddr,
+}
+
+pub type PeerBook = std::collections::HashMap<PeerId, Peer>;
+
+pub fn generate_peers(
+    addrs: Vec<std::net::SocketAddr>,
+    mut rng: impl rand::Rng + rand::CryptoRng,
+) -> (
+    PeerBook,
+    std::collections::HashMap<PeerId, ed25519_dalek::SigningKey>,
+) {
+    let mut peers = PeerBook::new();
+    let mut signing_keys = std::collections::HashMap::new();
+    for addr in addrs {
+        let key = generate_signing_key(&mut rng);
+        let peer = Peer {
+            verifying_key: key.verifying_key(),
+            addr,
+        };
+        let id = sha256(peer.verifying_key.as_bytes());
+        let replaced = peers.insert(id, peer);
+        assert!(replaced.is_none(), "peer id collision");
+        signing_keys.insert(id, key);
+    }
+    (peers, signing_keys)
+}
+
+impl Peer {
+    pub fn endpoint(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+}
