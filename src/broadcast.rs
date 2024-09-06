@@ -91,7 +91,7 @@ impl Context {
         let mut high_seqs = HashMap::<_, u32>::new();
         while let Some(buf) = messages.recv().await {
             let Ok(message) = bincode::options().deserialize::<Message>(&buf) else {
-                println!("malformed broadcast");
+                eprintln!("malformed broadcast");
                 continue;
             };
             if message.source == local_id {
@@ -102,7 +102,7 @@ impl Context {
                 continue;
             }
             if *prev_high < message.seq - 1 {
-                println!(
+                eprintln!(
                     "missing seq {:?} from {:?}",
                     *prev_high + 1..message.seq,
                     message.source

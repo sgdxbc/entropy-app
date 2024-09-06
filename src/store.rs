@@ -29,8 +29,11 @@ impl Store {
         Ok(())
     }
 
-    pub async fn load(&self, block_id: MerkleHash) -> anyhow::Result<Packet> {
+    pub async fn load(&self, block_id: MerkleHash) -> anyhow::Result<Option<Packet>> {
         let packet_dir = self.packet_dir(block_id);
+        if !packet_dir.is_dir() {
+            return Ok(None);
+        }
         let signature = Signature::from_bytes(
             &read(packet_dir.join("signature"))
                 .await?
@@ -55,10 +58,10 @@ impl Store {
                 (buf, proof),
             );
         }
-        Ok(Packet {
+        Ok(Some(Packet {
             chunks,
             root_certificate: (block_id, signature),
-        })
+        }))
     }
 
     pub async fn remove(&self, block_id: MerkleHash) -> anyhow::Result<()> {
