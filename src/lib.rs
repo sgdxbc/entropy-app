@@ -1,6 +1,7 @@
 pub mod app;
 pub mod block;
 pub mod broadcast; // should be pub/sub but no plan to implement topic
+pub mod server;
 pub mod store;
 
 pub fn generate_signing_key(rng: impl rand::Rng + rand::CryptoRng) -> ed25519_dalek::SigningKey {
@@ -37,6 +38,7 @@ pub static CLIENT: std::sync::LazyLock<reqwest::Client> =
 
 pub use primitive_types::H256 as NodeId;
 
+#[derive(Debug)]
 pub struct Node {
     // pub id: PeerId,
     pub verifying_key: ed25519_dalek::VerifyingKey,

@@ -28,11 +28,17 @@ use crate::{
 };
 
 pub struct Context {
-    local_id: NodeId,
-    nodes: NodeBook,
-    parameters: Parameters,
+    config: ContextConfig,
     store: Store,
     broadcast_messages: UnboundedReceiver<Bytes>,
+}
+
+#[derive(Debug)]
+pub struct ContextConfig {
+    pub local_id: NodeId,
+    pub nodes: NodeBook,
+    pub parameters: Parameters,
+    pub num_block_packet: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,12 +60,25 @@ struct GetMessage {
 }
 
 impl Context {
+    pub fn new(
+        config: ContextConfig,
+        store: Store,
+        broadcast_messages: UnboundedReceiver<Bytes>,
+    ) -> Self {
+        Self {
+            config,
+            store,
+            broadcast_messages,
+        }
+    }
+
     pub async fn session(self) -> anyhow::Result<()> {
         Self::recv_session(
-            &self.nodes,
-            self.local_id,
+            &self.config.nodes,
+            self.config.local_id,
             self.store,
-            self.parameters,
+            self.config.parameters,
+            self.config.num_block_packet,
             self.broadcast_messages,
         )
         .await
@@ -70,6 +89,7 @@ impl Context {
         local_id: NodeId,
         store: Store,
         parameters: Parameters,
+        num_block_packet: usize,
         mut broadcast_messages: UnboundedReceiver<Bytes>,
     ) -> anyhow::Result<()> {
         'recv: while let Some(bytes) = broadcast_messages.recv().await {
@@ -80,7 +100,8 @@ impl Context {
             match message {
                 Message::Put(message) => {
                     // TODO deduplicate?
-                    for _ in 0..10 {
+                    // TODO concurrent? probably not very useful when there are a lot of nodes
+                    for _ in 0..num_block_packet {
                         let response = CLIENT
                             .post(format!(
                                 "{}/entropy/encode/{:?}",
@@ -150,11 +171,15 @@ impl Context {
 pub struct ServerState {
     put: Arc<Mutex<HashMap<MerkleHash, PutState>>>,
     broadcast: UnboundedSender<Bytes>,
+    config: Arc<ServiceConfig>,
     packet_distr: Arc<PacketDistr>,
-    parameters: Arc<Parameters>,
-    local_id: NodeId,
-    key: Arc<SigningKey>,
-    num_node: usize,
+}
+
+pub struct ServiceConfig {
+    pub local_id: NodeId,
+    pub key: SigningKey,
+    pub parameters: Parameters,
+    pub num_node: usize,
 }
 
 struct PutState {
@@ -169,14 +194,14 @@ struct PutState {
 
 async fn benchmark_put(State(state): State<ServerState>) -> Response {
     let chunks = repeat_with(|| {
-        let mut buf = vec![0; state.parameters.chunk_size];
+        let mut buf = vec![0; state.config.parameters.chunk_size];
         thread_rng().fill_bytes(&mut buf);
         Bytes::from(buf)
     })
-    .take(state.parameters.k)
+    .take(state.config.parameters.k)
     .collect::<Vec<_>>();
     let start = Instant::now();
-    let block = Block::new(chunks, &state.key);
+    let block = Block::new(chunks, &state.config.key);
     let put = PutState {
         block: block.into(),
         start,
@@ -188,7 +213,7 @@ async fn benchmark_put(State(state): State<ServerState>) -> Response {
     state.put.lock().expect("can lock").insert(block_id, put);
     let put = PutMessage {
         block_id,
-        node_id: state.local_id,
+        node_id: state.config.local_id,
     };
     let bytes = Bytes::from(
         bincode::options()
@@ -258,14 +283,14 @@ async fn ack_persistence(
         .binary_search_by_key(&Reverse(count), |other_count| Reverse(*other_count))
         .unwrap_or_else(identity);
     put.num_persist_packet.insert(pos, count);
-    if put.num_persist_packet.len() >= state.num_node * 2 / 3
+    if put.num_persist_packet.len() >= state.config.num_node * 2 / 3
         && put
             .num_persist_packet
             .iter()
-            .skip(state.num_node / 3)
-            .take(state.num_node / 3)
+            .skip(state.config.num_node / 3)
+            .take(state.config.num_node / 3)
             .sum::<usize>()
-            >= state.parameters.k
+            >= state.config.parameters.k
     {
         put.end.get_or_insert_with(Instant::now);
     }
@@ -273,19 +298,13 @@ async fn ack_persistence(
     // it is not very useful in write throughput evaluation since that should scale up to all puts
     // are concurrent
     // the concurrency = 64 case still need to be performed with at least 64GB memory
-    if put.num_persist_packet.len() >= state.num_node - 1 {
+    if put.num_persist_packet.len() >= state.config.num_node - 1 {
         state_put.remove(&block_id);
     }
     StatusCode::OK.into_response()
 }
 
-pub fn make_service(
-    local_id: NodeId,
-    key: SigningKey,
-    parameters: Parameters,
-    num_node: usize,
-    broadcast: UnboundedSender<Bytes>,
-) -> Router {
+pub fn make_service(config: ServiceConfig, broadcast: UnboundedSender<Bytes>) -> Router {
     Router::new()
         .route("/put", post(benchmark_put))
         .route("/put/:block_id", get(poll_put))
@@ -294,10 +313,7 @@ pub fn make_service(
         .with_state(ServerState {
             put: Default::default(),
             broadcast,
-            packet_distr: PacketDistr::new(parameters.k).into(),
-            parameters: parameters.into(),
-            local_id,
-            key: key.into(),
-            num_node,
+            packet_distr: PacketDistr::new(config.parameters.k).into(),
+            config: config.into(),
         })
 }
