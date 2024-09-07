@@ -11,9 +11,10 @@ pub struct Store {
 }
 
 impl Store {
-    pub async fn new(path: PathBuf) -> anyhow::Result<Self> {
-        create_dir(&path).await?;
-        Ok(Self { path })
+    pub fn new(path: PathBuf) -> Self {
+        // not create dir here, because not remove dir on drop (which is because of the lack of
+        // async drop)
+        Self { path }
     }
 
     pub async fn save(&self, packet: Packet) -> anyhow::Result<()> {

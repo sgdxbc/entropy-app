@@ -13,7 +13,7 @@ pub struct Config {
     pub mesh: Vec<String>,
 }
 
-pub fn make_service(config: Config, store: Store) -> (Router, app::Context, broadcast::Context) {
+pub fn build(config: Config, store: Store) -> (Router, app::Context, broadcast::Context) {
     let broadcast_config = broadcast::ContextConfig {
         local_id: config.local_id,
         mesh: config.mesh,

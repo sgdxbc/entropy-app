@@ -195,12 +195,12 @@ pub fn make_service(config: ContextConfig) -> (Router, Context, Api) {
 
 impl ContextConfig {
     pub fn generate_network(
-        peers: &NodeBook,
+        nodes: &NodeBook,
         mesh_degree: usize,
         mut rng: impl Rng,
     ) -> anyhow::Result<Vec<Self>> {
         anyhow::ensure!(mesh_degree >= 3);
-        let n = peers.len();
+        let n = nodes.len();
         anyhow::ensure!(n > mesh_degree);
         anyhow::ensure!(n * mesh_degree % 2 == 0);
 
@@ -262,7 +262,7 @@ impl ContextConfig {
             Some(edges)
         }
 
-        let keys = peers.keys().copied().collect::<Vec<_>>();
+        let keys = nodes.keys().copied().collect::<Vec<_>>();
         let edges = loop {
             if let Some(edges) = try_creation(&keys, mesh_degree, &mut rng) {
                 break edges;
@@ -286,12 +286,12 @@ impl ContextConfig {
                 .get_mut(&id1)
                 .unwrap()
                 .mesh
-                .push(peers[&id2].endpoint());
+                .push(nodes[&id2].endpoint());
             configs
                 .get_mut(&id2)
                 .unwrap()
                 .mesh
-                .push(peers[&id1].endpoint());
+                .push(nodes[&id1].endpoint());
         }
         Ok(configs.into_values().collect())
     }

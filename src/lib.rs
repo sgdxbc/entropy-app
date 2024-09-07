@@ -38,7 +38,7 @@ pub static CLIENT: std::sync::LazyLock<reqwest::Client> =
 
 pub use primitive_types::H256 as NodeId;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Node {
     // pub id: PeerId,
     pub verifying_key: ed25519_dalek::VerifyingKey,
@@ -47,7 +47,7 @@ pub struct Node {
 
 pub type NodeBook = std::collections::HashMap<NodeId, Node>;
 
-pub fn generate_peers(
+pub fn generate_nodes(
     addrs: Vec<std::net::SocketAddr>,
     mut rng: impl rand::Rng + rand::CryptoRng,
 ) -> (

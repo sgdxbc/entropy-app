@@ -1,7 +1,7 @@
 use std::{collections::HashMap, net::SocketAddr, time::Duration};
 
 use axum::Router;
-use entropy_app::{broadcast, generate_peers};
+use entropy_app::{broadcast, generate_nodes};
 use rand::{seq::IteratorRandom, thread_rng};
 use tokio::{
     net::TcpListener,
@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
     let addrs = (1..=n)
         .map(|i| SocketAddr::from(([127, 0, 0, i], 3000)))
         .collect();
-    let (peers, _keys) = generate_peers(addrs, &mut rng);
+    let (peers, _keys) = generate_nodes(addrs, &mut rng);
     let broadcast_configs = broadcast::ContextConfig::generate_network(&peers, 6, &mut rng)?;
 
     let mut sessions = JoinSet::new();

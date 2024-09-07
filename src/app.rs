@@ -288,7 +288,7 @@ async fn ack_persistence(
             .num_persist_packet
             .iter()
             .skip(state.config.num_node / 3)
-            .take(state.config.num_node / 3)
+            .take(state.config.num_node / 3 + 1)
             .sum::<usize>()
             >= state.config.parameters.k
     {
