@@ -21,7 +21,7 @@ pub fn p_degree(k: usize) -> Vec<f64> {
     let mut tau = p_degree_ideal(k);
     let k = k as f64;
     let s = c * (k / delta).ln() * k.sqrt();
-    eprintln!("k {k} s {s} k/s {}", (k / s).floor());
+    // eprintln!("k {k} s {s} k/s {}", (k / s).floor());
     for (i, p) in tau.iter_mut().enumerate() {
         let d = (i + 1) as f64;
         if d == (k / s).floor() {

@@ -2,6 +2,7 @@ use std::{
     cmp::Reverse,
     collections::HashMap,
     convert::identity,
+    hash::BuildHasher,
     iter::repeat_with,
     sync::{Arc, Mutex},
     time::Instant,
@@ -16,8 +17,9 @@ use axum::{
 };
 use bincode::Options;
 use bytes::Bytes;
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{SigningKey, VerifyingKey, PUBLIC_KEY_LENGTH};
 use rand::{thread_rng, RngCore as _};
+use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -171,6 +173,7 @@ impl Context {
 #[derive(Clone)]
 pub struct ServerState {
     put: Arc<Mutex<HashMap<MerkleHash, PutState>>>,
+    get: Arc<Mutex<HashMap<MerkleHash, GetState>>>,
     broadcast: UnboundedSender<Bytes>,
     config: Arc<ServiceConfig>,
     packet_distr: Arc<PacketDistr>,
@@ -193,6 +196,14 @@ struct PutState {
     end: Option<Instant>,
 }
 
+struct GetState {
+    verifying_key: VerifyingKey,
+    scratch: Option<Packet>,
+    start: Instant,
+    end: Option<Instant>,
+    checksum: u64,
+}
+
 async fn benchmark_put(State(state): State<ServerState>) -> Response {
     let chunks = repeat_with(|| {
         let mut buf = vec![0; state.config.parameters.chunk_size];
@@ -201,6 +212,7 @@ async fn benchmark_put(State(state): State<ServerState>) -> Response {
     })
     .take(state.config.parameters.k)
     .collect::<Vec<_>>();
+    let checksum = FxBuildHasher.hash_one(&chunks);
     let start = Instant::now();
     let block = Block::new(chunks, &state.config.key);
     let put = PutState {
@@ -224,7 +236,12 @@ async fn benchmark_put(State(state): State<ServerState>) -> Response {
     // the broadcast here will bypass loopback
     // TODO a decent implementation should store packets locally as well
     state.broadcast.send(bytes).expect("can send");
-    format!("{block_id:?}").into_response()
+    Json((
+        format!("{block_id:?}"),
+        checksum,
+        state.config.key.verifying_key().to_bytes(),
+    ))
+    .into_response()
 }
 
 async fn poll_put(State(state): State<ServerState>, Path(block_id): Path<String>) -> Response {
@@ -306,16 +323,116 @@ async fn ack_persistence(
     StatusCode::OK.into_response()
 }
 
+async fn benchmark_get(
+    State(state): State<ServerState>,
+    Json((block_id, verifying_key)): Json<(String, [u8; PUBLIC_KEY_LENGTH])>,
+) -> Response {
+    let Ok(block_id) = block_id.parse::<MerkleHash>() else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&verifying_key) else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    let get = GetState {
+        verifying_key,
+        start: Instant::now(),
+        scratch: None,
+        end: None,
+        checksum: 0,
+    };
+    let replaced = state.get.lock().expect("can lock").insert(block_id, get);
+    if replaced.is_some() {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    }
+    let get = GetMessage {
+        block_id,
+        node_id: state.config.local_id,
+    };
+    let bytes = Bytes::from(
+        bincode::options()
+            .serialize(&Message::Get(get))
+            .expect("can serialize"),
+    );
+    state.broadcast.send(bytes).expect("can send");
+    StatusCode::OK.into_response()
+}
+
+async fn poll_get(State(state): State<ServerState>, Path(block_id): Path<String>) -> Response {
+    let Ok(block_id) = block_id.parse::<MerkleHash>() else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    let mut get = state.get.lock().expect("can lock");
+    let Some(get) = get.get_mut(&block_id) else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    Json(if let Some(end) = get.end {
+        Some((end - get.start, get.checksum))
+    } else {
+        None
+    })
+    .into_response()
+}
+
+async fn upload(
+    State(state): State<ServerState>,
+    Path(block_id): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let Ok(block_id) = block_id.parse::<MerkleHash>() else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    let mut get = state.get.lock().expect("can lock");
+    let Some(get) = get.get_mut(&block_id) else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let Ok(packet) = Packet::from_bytes(body, &state.config.parameters) else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    if packet
+        .verify(&get.verifying_key, &state.config.parameters)
+        .is_err()
+    {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    }
+    let packet = if let Some(mut scratch) = get.scratch.take() {
+        scratch.merge(packet);
+        scratch
+    } else {
+        packet
+    };
+    if !packet.can_recover(&state.config.parameters) {
+        get.scratch = Some(packet);
+    } else {
+        let block = packet
+            .recover(&state.config.parameters)
+            .expect("can recover");
+        let replaced = get.end.replace(Instant::now());
+        assert!(replaced.is_none());
+        get.checksum = FxBuildHasher.hash_one(
+            block
+                .chunks
+                .into_iter()
+                .map(|(buf, _)| buf)
+                .collect::<Vec<_>>(),
+        )
+    }
+    StatusCode::OK.into_response()
+}
+
 pub fn make_service(config: ServiceConfig, broadcast: UnboundedSender<Bytes>) -> Router {
     Router::new()
         .route("/put", post(benchmark_put))
         .route("/put/:block_id", get(poll_put))
         .route("/encode/:block_id/:node_id", post(encode))
         .route("/persist/:block_id/:node_id", post(ack_persistence))
+        .route("/get", post(benchmark_get))
+        .route("/get/:block_id", get(poll_get))
+        .route("/upload/:block_id", post(upload))
         .with_state(ServerState {
-            put: Default::default(),
             broadcast,
             packet_distr: PacketDistr::new(config.parameters.k).into(),
             config: config.into(),
+            put: Default::default(),
+            get: Default::default(),
         })
 }
