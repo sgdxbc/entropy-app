@@ -104,9 +104,10 @@ impl Context {
                     for _ in 0..num_block_packet {
                         let response = CLIENT
                             .post(format!(
-                                "{}/entropy/encode/{:?}",
+                                "{}/entropy/encode/{:?}/{:?}",
                                 nodes[&message.node_id].endpoint(),
-                                message.block_id
+                                message.block_id,
+                                local_id,
                             ))
                             .send()
                             .await?;
@@ -298,9 +299,10 @@ async fn ack_persistence(
     // it is not very useful in write throughput evaluation since that should scale up to all puts
     // are concurrent
     // the concurrency = 64 case still need to be performed with at least 64GB memory
-    if put.num_persist_packet.len() >= state.config.num_node - 1 {
-        state_put.remove(&block_id);
-    }
+    // if put.num_persist_packet.len() >= state.config.num_node - 1 {
+    //     state_put.remove(&block_id);
+    // }
+    // and i just realize it clears benchmark results as well
     StatusCode::OK.into_response()
 }
 
@@ -308,7 +310,7 @@ pub fn make_service(config: ServiceConfig, broadcast: UnboundedSender<Bytes>) ->
     Router::new()
         .route("/put", post(benchmark_put))
         .route("/put/:block_id", get(poll_put))
-        .route("/encode/:block_id", post(encode))
+        .route("/encode/:block_id/:node_id", post(encode))
         .route("/persist/:block_id/:node_id", post(ack_persistence))
         .with_state(ServerState {
             put: Default::default(),

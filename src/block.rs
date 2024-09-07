@@ -146,7 +146,7 @@ impl Packet {
     pub fn from_bytes(mut bytes: Bytes, parameters: &Parameters) -> anyhow::Result<Self> {
         anyhow::ensure!(bytes.len() >= size_of::<MerkleHash>());
         let mut root_hash = [0; size_of::<MerkleHash>()];
-        root_hash.copy_from_slice(&bytes.split_to(Signature::BYTE_SIZE));
+        root_hash.copy_from_slice(&bytes.split_to(size_of::<MerkleHash>()));
         let root_hash = primitive_types::H256(root_hash);
 
         anyhow::ensure!(bytes.len() >= Signature::BYTE_SIZE);

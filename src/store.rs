@@ -23,6 +23,10 @@ impl Store {
         write(packet_dir.join("signature"), packet.signature().to_bytes()).await?;
         for (index, (buf, proof)) in &packet.chunks {
             let chunk_dir = packet_dir.join(index.to_string());
+            // TODO better handling, probably just do not send
+            if chunk_dir.is_dir() {
+                continue;
+            }
             create_dir(&chunk_dir).await?;
             write(chunk_dir.join("chunk"), buf).await?;
             write(chunk_dir.join("proof"), proof.to_bytes()).await?
