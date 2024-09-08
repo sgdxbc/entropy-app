@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, ffi::OsStr, path::PathBuf};
 
 use bytes::Bytes;
 use ed25519_dalek::Signature;
-use tokio::fs::{create_dir, create_dir_all, read, read_dir, remove_dir_all, write};
+use tokio::fs::{create_dir, create_dir_all, read, read_dir, remove_dir_all, write, ReadDir};
 
 use crate::block::{MerkleHash, MerkleProof, Packet};
 
@@ -53,19 +53,36 @@ impl Store {
             }
             let buf = Bytes::from(read(entry.path().join("chunk")).await?);
             let proof = MerkleProof::from_bytes(&read(entry.path().join("proof")).await?)?;
-            chunks.insert(
-                entry
-                    .path()
-                    .file_name()
-                    .and_then(OsStr::to_str)
-                    .ok_or(anyhow::format_err!("invalid chunk directory name"))?
-                    .parse::<usize>()?,
-                (buf, proof),
-            );
+            let index = entry
+                .path()
+                .file_name()
+                .and_then(OsStr::to_str)
+                .ok_or(anyhow::format_err!("invalid chunk directory name"))?
+                .parse::<usize>()?;
+            chunks.insert(index, (buf, proof));
         }
         Ok(Some(Packet {
             chunks,
             root_certificate: (block_id, signature),
+        }))
+    }
+
+    pub async fn load_iter(&self, block_id: MerkleHash) -> anyhow::Result<Option<LoadIter>> {
+        let packet_dir = self.packet_dir(block_id);
+        if !packet_dir.is_dir() {
+            return Ok(None);
+        }
+        let signature = Signature::from_bytes(
+            &read(packet_dir.join("signature"))
+                .await?
+                .try_into()
+                .map_err(|_| anyhow::format_err!("invalid signature bytes length"))?,
+        );
+        let read_dir = read_dir(packet_dir).await?;
+        Ok(Some(LoadIter {
+            block_id,
+            read_dir,
+            signature,
         }))
     }
 
@@ -76,5 +93,38 @@ impl Store {
 
     fn packet_dir(&self, block_id: primitive_types::H256) -> PathBuf {
         self.path.join(format!("{:?}", block_id))
+    }
+}
+
+#[derive(Debug)]
+pub struct LoadIter {
+    block_id: MerkleHash,
+    read_dir: ReadDir,
+    signature: Signature,
+}
+
+impl LoadIter {
+    pub async fn next(&mut self) -> anyhow::Result<Option<(usize, Packet)>> {
+        let Some(entry) = self.read_dir.next_entry().await? else {
+            return Ok(None);
+        };
+        if !entry.file_type().await?.is_dir() {
+            return Box::pin(self.next()).await;
+        }
+        let buf = Bytes::from(read(entry.path().join("chunk")).await?);
+        let proof = MerkleProof::from_bytes(&read(entry.path().join("proof")).await?)?;
+        let index = entry
+            .path()
+            .file_name()
+            .and_then(OsStr::to_str)
+            .ok_or(anyhow::format_err!("invalid chunk directory name"))?
+            .parse::<usize>()?;
+        Ok(Some((
+            index,
+            Packet {
+                chunks: [(index, (buf, proof))].into_iter().collect(),
+                root_certificate: (self.block_id, self.signature),
+            },
+        )))
     }
 }

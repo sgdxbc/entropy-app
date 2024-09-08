@@ -147,21 +147,40 @@ impl Context {
                     }
                 }
                 Message::Get(message) => {
-                    let Some(packet) = store.load(message.block_id).await? else {
+                    // let Some(packet) = store.load(message.block_id).await? else {
+                    //     //
+                    //     continue;
+                    // };
+                    // let response = CLIENT
+                    //     .post(format!(
+                    //         "{}/entropy/upload/{:?}",
+                    //         nodes[&message.node_id].endpoint(),
+                    //         message.block_id
+                    //     ))
+                    //     .body(packet.to_bytes())
+                    //     .send()
+                    //     .await?;
+                    // if response.status() != StatusCode::SERVICE_UNAVAILABLE {
+                    //     response.error_for_status()?;
+                    // }
+
+                    let Some(mut packets) = store.load_iter(message.block_id).await? else {
                         //
                         continue;
                     };
-                    let response = CLIENT
-                        .post(format!(
-                            "{}/entropy/upload/{:?}",
-                            nodes[&message.node_id].endpoint(),
-                            message.block_id
-                        ))
-                        .body(packet.to_bytes())
-                        .send()
-                        .await?;
-                    if response.status() != StatusCode::SERVICE_UNAVAILABLE {
-                        response.error_for_status()?;
+                    while let Some((index, packet)) = packets.next().await? {
+                        let response = CLIENT
+                            .post(format!(
+                                "{}/entropy/upload/{:?}/{index}",
+                                nodes[&message.node_id].endpoint(),
+                                message.block_id
+                            ))
+                            .body(packet.to_bytes())
+                            .send()
+                            .await?;
+                        if response.status() != StatusCode::SERVICE_UNAVAILABLE {
+                            response.error_for_status()?;
+                        }
                     }
                 }
             }
@@ -422,6 +441,61 @@ async fn upload(
     StatusCode::OK.into_response()
 }
 
+async fn upload_index(
+    State(state): State<ServerState>,
+    Path((block_id, index)): Path<(String, usize)>,
+    body: axum::body::Bytes,
+) -> Response {
+    let Ok(block_id) = block_id.parse::<MerkleHash>() else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    let mut get = state.get.lock().expect("can lock");
+    let Some(get) = get.get_mut(&block_id) else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    if get.end.is_some() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    if let Some(scratch) = &get.scratch {
+        if scratch.chunks.contains_key(&index) {
+            // consider a more suitable semantic status code
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    }
+    let Ok(packet) = Packet::from_bytes(body, &state.config.parameters) else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    if packet
+        .verify(&get.verifying_key, &state.config.parameters)
+        .is_err()
+    {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    }
+    let packet = if let Some(mut scratch) = get.scratch.take() {
+        scratch.merge(packet);
+        scratch
+    } else {
+        packet
+    };
+    if !packet.can_recover(&state.config.parameters) {
+        get.scratch = Some(packet);
+    } else {
+        let block = packet
+            .recover(&state.config.parameters)
+            .expect("can recover");
+        let replaced = get.end.replace(Instant::now());
+        assert!(replaced.is_none());
+        get.checksum = FxBuildHasher.hash_one(
+            block
+                .chunks
+                .into_iter()
+                .map(|(buf, _)| buf)
+                .collect::<Vec<_>>(),
+        )
+    }
+    StatusCode::OK.into_response()
+}
+
 pub fn make_service(config: ServiceConfig, broadcast: UnboundedSender<Bytes>) -> Router {
     Router::new()
         .route("/put", post(benchmark_put))
@@ -431,6 +505,7 @@ pub fn make_service(config: ServiceConfig, broadcast: UnboundedSender<Bytes>) ->
         .route("/get", post(benchmark_get))
         .route("/get/:block_id", get(poll_get))
         .route("/upload/:block_id", post(upload))
+        .route("/upload/:block_id/:index", post(upload_index))
         .with_state(ServerState {
             broadcast,
             packet_distr: PacketDistr::new(config.parameters.k).into(),

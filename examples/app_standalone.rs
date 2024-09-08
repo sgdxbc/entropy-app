@@ -12,7 +12,7 @@ use tokio::{fs::create_dir_all, net::TcpListener, task::JoinSet, time::sleep};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let f = 3;
+    let f = 33;
     let num_block_packet = 10;
     let parameters = Parameters {
         chunk_size: 1 << 10,
@@ -56,53 +56,55 @@ async fn main() -> anyhow::Result<()> {
     let activity_session = async move {
         sleep(Duration::from_secs(1)).await;
         let client = reqwest::Client::new();
-        println!("start");
-        let (block_id, checksum, verifying_key) = client
-            .post("http://127.0.0.1:3000/entropy/put")
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<(String, u64, [u8; PUBLIC_KEY_LENGTH])>()
-            .await?;
-        println!("put {block_id} checksum {checksum:08x}");
-        loop {
-            if let Some(latency) = client
-                .get(format!("http://127.0.0.1:3000/entropy/put/{block_id}"))
+        for i in 1..=10 {
+            println!("start");
+            let (block_id, checksum, verifying_key) = client
+                .post("http://127.0.0.1:3000/entropy/put")
                 .send()
                 .await?
                 .error_for_status()?
-                .json::<Option<Duration>>()
-                .await?
-            {
-                println!("{latency:?}");
-                break;
+                .json::<(String, u64, [u8; PUBLIC_KEY_LENGTH])>()
+                .await?;
+            println!("put {block_id} checksum {checksum:08x}");
+            loop {
+                if let Some(latency) = client
+                    .get(format!("http://127.0.0.1:3000/entropy/put/{block_id}"))
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json::<Option<Duration>>()
+                    .await?
+                {
+                    println!("{latency:?}");
+                    break;
+                }
             }
-        }
 
-        sleep(Duration::from_secs(1)).await;
-        println!("get {block_id}");
-        client
-            .post("http://127.0.0.1:3000/entropy/get")
-            .json(&(block_id.clone(), verifying_key))
-            .send()
-            .await?
-            .error_for_status()?;
-        loop {
-            if let Some((latency, other_checksum)) = client
-                .get(format!("http://127.0.0.1:3000/entropy/get/{block_id}"))
+            sleep(Duration::from_secs(1)).await;
+            println!("get {block_id}");
+            client
+                .post(format!("http://127.0.0.{i}:3000/entropy/get"))
+                .json(&(block_id.clone(), verifying_key))
                 .send()
                 .await?
-                .error_for_status()?
-                .json::<Option<(Duration, u64)>>()
-                .await?
-            {
-                println!("{latency:?} checksum {other_checksum:08x}");
-                anyhow::ensure!(other_checksum == checksum);
-                break;
+                .error_for_status()?;
+            loop {
+                if let Some((latency, other_checksum)) = client
+                    .get(format!("http://127.0.0.{i}:3000/entropy/get/{block_id}"))
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json::<Option<(Duration, u64)>>()
+                    .await?
+                {
+                    println!("{latency:?} checksum {other_checksum:08x}");
+                    anyhow::ensure!(other_checksum == checksum);
+                    break;
+                }
             }
+            println!("wait for verifying post activity system stability");
+            sleep(Duration::from_secs(1)).await;
         }
-        println!("wait for verifying post activity system stability");
-        sleep(Duration::from_secs(1)).await;
         anyhow::Ok(())
     };
 
