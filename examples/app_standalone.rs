@@ -4,7 +4,7 @@ use ed25519_dalek::PUBLIC_KEY_LENGTH;
 use entropy_app::{
     block::Parameters,
     broadcast, generate_nodes,
-    server::{build, Config},
+    node::{build, Config},
     store::Store,
 };
 use rand::thread_rng;
