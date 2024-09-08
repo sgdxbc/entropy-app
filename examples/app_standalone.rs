@@ -1,5 +1,6 @@
-use std::{collections::HashMap, env::temp_dir, net::SocketAddr};
+use std::{collections::HashMap, env::temp_dir, net::SocketAddr, time::Duration};
 
+use ed25519_dalek::PUBLIC_KEY_LENGTH;
 use entropy_app::{
     block::Parameters,
     broadcast, generate_nodes,
@@ -7,7 +8,7 @@ use entropy_app::{
     store::Store,
 };
 use rand::thread_rng;
-use tokio::{fs::create_dir_all, net::TcpListener, task::JoinSet};
+use tokio::{fs::create_dir_all, net::TcpListener, task::JoinSet, time::sleep};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -51,8 +52,63 @@ async fn main() -> anyhow::Result<()> {
         sessions.spawn(app_context.session());
         sessions.spawn(broadcast_context.session());
     }
-    if let Some(result) = sessions.join_next().await {
-        result??
+
+    let activity_session = async move {
+        sleep(Duration::from_secs(1)).await;
+        let client = reqwest::Client::new();
+        println!("start");
+        let (block_id, checksum, verifying_key) = client
+            .post("http://127.0.0.1:3000/entropy/put")
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<(String, u64, [u8; PUBLIC_KEY_LENGTH])>()
+            .await?;
+        println!("put {block_id} checksum {checksum:08x}");
+        loop {
+            if let Some(latency) = client
+                .get(format!("http://127.0.0.1:3000/entropy/put/{block_id}"))
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<Option<Duration>>()
+                .await?
+            {
+                println!("{latency:?}");
+                break;
+            }
+        }
+
+        sleep(Duration::from_secs(1)).await;
+        println!("get {block_id}");
+        client
+            .post("http://127.0.0.1:3000/entropy/get")
+            .json(&(block_id.clone(), verifying_key))
+            .send()
+            .await?
+            .error_for_status()?;
+        loop {
+            if let Some((latency, other_checksum)) = client
+                .get(format!("http://127.0.0.1:3000/entropy/get/{block_id}"))
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<Option<(Duration, u64)>>()
+                .await?
+            {
+                println!("{latency:?} checksum {other_checksum:08x}");
+                anyhow::ensure!(other_checksum == checksum);
+                break;
+            }
+        }
+        println!("wait for verifying post activity system stability");
+        sleep(Duration::from_secs(1)).await;
+        anyhow::Ok(())
+    };
+
+    tokio::select! {
+        result = activity_session => return result,
+        Some(result) = sessions.join_next() => result??,
     }
     anyhow::bail!("unreachable")
 }

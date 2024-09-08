@@ -385,6 +385,9 @@ async fn upload(
     let Some(get) = get.get_mut(&block_id) else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    if get.end.is_some() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     let Ok(packet) = Packet::from_bytes(body, &state.config.parameters) else {
         return StatusCode::IM_A_TEAPOT.into_response();
     };

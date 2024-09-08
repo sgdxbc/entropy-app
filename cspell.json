@@ -12,6 +12,7 @@
         "prehashed",
         "reqwest",
         "rngs",
+        "rustc",
         "Seedable",
         "seqs",
         "serde",
