@@ -113,7 +113,7 @@ impl Context {
                             ))
                             .send()
                             .await?;
-                        if response.status() == StatusCode::SERVICE_UNAVAILABLE {
+                        if response.status() == StatusCode::NOT_FOUND {
                             eprintln!("put service unavailable");
                             continue 'recv;
                         }
@@ -142,7 +142,7 @@ impl Context {
                         ))
                         .send()
                         .await?;
-                    if response.status() != StatusCode::SERVICE_UNAVAILABLE {
+                    if response.status() != StatusCode::NOT_FOUND {
                         response.error_for_status()?;
                     }
                 }
@@ -178,9 +178,10 @@ impl Context {
                             .body(packet.to_bytes())
                             .send()
                             .await?;
-                        if response.status() != StatusCode::SERVICE_UNAVAILABLE {
-                            response.error_for_status()?;
+                        if response.status() == StatusCode::NOT_FOUND {
+                            break;
                         }
+                        response.error_for_status()?;
                     }
                 }
             }
@@ -289,7 +290,7 @@ async fn encode(
     {
         let mut put = state.put.lock().expect("can lock");
         let Some(put) = put.get_mut(&block_id) else {
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            return StatusCode::NOT_FOUND.into_response();
         };
         *put.num_node_packet.entry(node_id).or_default() += 1;
         block = put.block.clone();
@@ -312,7 +313,7 @@ async fn ack_persistence(
     };
     let state_put = &mut state.put.lock().expect("can lock");
     let Some(put) = state_put.get_mut(&block_id) else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        return StatusCode::NOT_FOUND.into_response();
     };
     let count = put.num_node_packet.remove(&node_id).unwrap_or_default();
     let pos = put
@@ -402,10 +403,10 @@ async fn upload(
     };
     let mut get = state.get.lock().expect("can lock");
     let Some(get) = get.get_mut(&block_id) else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        return StatusCode::NOT_FOUND.into_response();
     };
     if get.end.is_some() {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        return StatusCode::NOT_FOUND.into_response();
     }
     let Ok(packet) = Packet::from_bytes(body, &state.config.parameters) else {
         return StatusCode::IM_A_TEAPOT.into_response();
@@ -451,15 +452,15 @@ async fn upload_index(
     };
     let mut get = state.get.lock().expect("can lock");
     let Some(get) = get.get_mut(&block_id) else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        return StatusCode::NOT_FOUND.into_response();
     };
     if get.end.is_some() {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        return StatusCode::NOT_FOUND.into_response();
     }
     if let Some(scratch) = &get.scratch {
         if scratch.chunks.contains_key(&index) {
             // consider a more suitable semantic status code
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            return StatusCode::OK.into_response();
         }
     }
     let Ok(packet) = Packet::from_bytes(body, &state.config.parameters) else {
