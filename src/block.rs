@@ -185,6 +185,11 @@ impl Packet {
     pub fn verify(&self, key: &VerifyingKey, parameters: &Parameters) -> anyhow::Result<()> {
         let (root_hash, signature) = &self.root_certificate;
         key.verify(root_hash.as_bytes(), signature)?;
+        self.verify_merkle_proof(parameters)
+    }
+
+    pub fn verify_merkle_proof(&self, parameters: &Parameters) -> anyhow::Result<()> {
+        let (root_hash, _) = &self.root_certificate;
         for (index, (buf, proof)) in &self.chunks {
             let verified = proof.verify(
                 *root_hash.as_fixed_bytes(),

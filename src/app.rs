@@ -121,9 +121,10 @@ impl Context {
                             response.error_for_status()?.bytes().await?,
                             &parameters,
                         )?;
-                        if packet
-                            .verify(&nodes[&message.node_id].verifying_key, &parameters)
-                            .is_err()
+                        // if packet
+                        //     .verify(&nodes[&message.node_id].verifying_key, &parameters)
+                        if packet.block_id() != message.block_id
+                            || packet.verify_merkle_proof(&parameters).is_err()
                         {
                             eprintln!("verify failed");
                             // do not request more packets from a faulty sender
@@ -411,9 +412,12 @@ async fn upload(
     let Ok(packet) = Packet::from_bytes(body, &state.config.parameters) else {
         return StatusCode::IM_A_TEAPOT.into_response();
     };
-    if packet
-        .verify(&get.verifying_key, &state.config.parameters)
-        .is_err()
+    // if packet
+    //     .verify(&get.verifying_key, &state.config.parameters)
+    if packet.block_id() != block_id
+        || packet
+            .verify_merkle_proof(&state.config.parameters)
+            .is_err()
     {
         return StatusCode::IM_A_TEAPOT.into_response();
     }
