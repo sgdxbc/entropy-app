@@ -58,7 +58,9 @@ async fn main() -> anyhow::Result<()> {
     let (router, app_context, broadcast_context) = build(config, store);
     let router = router.route("/ok", get(|| async {}));
 
-    let listener = TcpListener::bind(nodes[&node_id].addr).await?;
+    let mut addr = nodes[&node_id].addr;
+    addr.set_ip([0; 4].into());
+    let listener = TcpListener::bind(addr).await?;
     let endpoint = async move {
         axum::serve(listener, router).await?;
         anyhow::Ok(())

@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, net::IpAddr};
+use std::{collections::BTreeMap, net::IpAddr, path::Path};
 
 use serde::Deserialize;
 use tokio::process::Command;
@@ -41,6 +41,16 @@ pub async fn ssh(host: impl AsRef<str>, command: impl AsRef<str>) -> anyhow::Res
         .arg(host.as_ref())
         .arg(command.as_ref())
         .stdout(std::process::Stdio::null())
+        .status()
+        .await?;
+    anyhow::ensure!(status.success());
+    Ok(())
+}
+
+pub async fn rsync(host: impl AsRef<str>, path: impl AsRef<Path>) -> anyhow::Result<()> {
+    let status = Command::new("rsync")
+        .arg(path.as_ref().display().to_string())
+        .arg(format!("{}:", host.as_ref()))
         .status()
         .await?;
     anyhow::ensure!(status.success());
