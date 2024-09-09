@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
 
     let output = terraform_output().await?;
     let mut sessions = JoinSet::new();
-    for instance in output.regions.values().flatten() {
+    for instance in output.instances() {
         sessions.spawn(rsync(
             instance.public_dns.clone(),
             Path::new("target/release/entropy-app"),

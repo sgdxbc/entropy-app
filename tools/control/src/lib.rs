@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, net::IpAddr, path::Path, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    net::IpAddr,
+    path::Path,
+    time::Duration,
+};
 
 use control_spec::SystemSpec;
 use serde::Deserialize;
@@ -11,16 +16,41 @@ pub struct Instance {
     pub public_dns: String,
 }
 
-impl Instance {
-    pub fn url(&self) -> String {
-        // format!("http://{}:3000", self.public_dns)
-        format!("http://{}:3000", self.public_ip)
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct TerraformOutput {
     pub regions: BTreeMap<String, Vec<Instance>>,
+}
+
+impl TerraformOutput {
+    pub fn instances(&self) -> impl Iterator<Item = &Instance> + Clone {
+        self.regions.values().flatten()
+    }
+}
+
+pub struct Node {
+    pub instance: Instance,
+    pub local_index: usize,
+}
+
+impl Node {
+    pub fn url(&self) -> String {
+        format!(
+            "http://{}:{}",
+            self.instance.public_dns,
+            self.local_index + 3000
+        )
+    }
+}
+
+impl TerraformOutput {
+    pub fn nodes(&self) -> impl Iterator<Item = Node> + Clone + '_ {
+        (0..).flat_map(|local_index| {
+            self.instances().map(move |instance| Node {
+                instance: instance.clone(),
+                local_index,
+            })
+        })
+    }
 }
 
 pub async fn terraform_output() -> anyhow::Result<TerraformOutput> {
@@ -59,12 +89,12 @@ pub async fn rsync(host: impl AsRef<str>, path: impl AsRef<Path>) -> anyhow::Res
     Ok(())
 }
 
-pub async fn reload(spec: SystemSpec) -> anyhow::Result<()> {
-    write("./target/spec.json", &serde_json::to_vec_pretty(&spec)?).await?;
+pub async fn reload(spec: &SystemSpec) -> anyhow::Result<()> {
+    write("./target/spec.json", &serde_json::to_vec_pretty(spec)?).await?;
 
     let output = terraform_output().await?;
     let mut sessions = JoinSet::new();
-    for instance in output.regions.values().flatten() {
+    for instance in output.instances() {
         sessions.spawn(ssh(
             instance.public_dns.clone(),
             "rm -r /tmp/entropy; pkill -x entropy-app; true",
@@ -82,16 +112,30 @@ pub async fn reload(spec: SystemSpec) -> anyhow::Result<()> {
     println!("cleanup done");
     sleep(Duration::from_secs(1)).await;
 
-    for (index, instance) in output
-        .regions
-        .values()
-        .flatten()
-        .cycle()
-        .take(spec.n)
-        .enumerate()
-    {
-        let command = format!("tmux new -d -s entropy-{index} \"./entropy-app {index} 2>./entropy-{index}.log\"");
-        sessions.spawn(ssh(instance.public_dns.clone(), command));
+    // for (index, node) in output.nodes().take(spec.n).enumerate() {
+    //     let command = format!(
+    //         "tmux new -d -s entropy-{index} \"./entropy-app {index} 2>./entropy-{index}.log\""
+    //     );
+    //     sessions.spawn(ssh(node.instance.public_dns.clone(), command));
+    // }
+    let mut instance_commands = HashMap::<_, Vec<_>>::new();
+    for (index, node) in output.nodes().take(spec.n).enumerate() {
+        let command = format!(
+            "tmux new -d -s entropy-{index} \"./entropy-app {index} 2>./entropy-{index}.log\""
+        );
+        instance_commands
+            .entry(node.instance.public_dns.clone())
+            .or_default()
+            .push(command);
+    }
+    for (host, commands) in instance_commands {
+        sessions.spawn(async move {
+            // for command in commands {
+            //     ssh(&host, command).await?
+            // }
+            // Ok(())
+            ssh(&host, commands.join(" && ")).await
+        });
     }
     let mut the_result = Ok(());
     while let Some(result) = sessions.join_next().await {

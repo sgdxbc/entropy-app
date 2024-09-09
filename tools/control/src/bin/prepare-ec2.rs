@@ -17,17 +17,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let output = terraform_output().await?;
-    let addrs = (0..100)
-        .flat_map(|i| {
-            output
-                .regions
-                .values()
-                .flatten()
-                .map(|instance| match mode {
-                    Mode::Latency => instance.public_ip,
-                    Mode::Tput => instance.private_ip,
-                })
-                .map(move |ip| SocketAddr::from((ip, 3000 + i)))
+    let addrs = output
+        .nodes()
+        .take_while(|node| node.local_index < 100)
+        .map(|node| {
+            let ip = match mode {
+                Mode::Latency => node.instance.public_ip,
+                Mode::Tput => node.instance.private_ip,
+            };
+            SocketAddr::from((ip, (node.local_index + 3000) as _))
         })
         .collect::<Vec<_>>();
 
@@ -35,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
     write(addrs_path, serde_json::to_vec_pretty(&addrs)?).await?;
 
     let mut sessions = JoinSet::new();
-    for instance in output.regions.values().flatten() {
+    for instance in output.instances() {
         sessions.spawn(rsync(instance.public_dns.clone(), addrs_path));
     }
     let mut the_result = Ok(());
