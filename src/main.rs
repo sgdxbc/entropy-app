@@ -1,5 +1,11 @@
-use std::{collections::HashMap, env::temp_dir, net::SocketAddr};
+use std::{
+    collections::HashMap,
+    env::{args, temp_dir},
+    net::SocketAddr,
+};
 
+use axum::routing::get;
+use control_spec::SystemSpec;
 use entropy_app::{
     block::Parameters,
     broadcast, generate_nodes,
@@ -7,20 +13,23 @@ use entropy_app::{
     store::Store,
 };
 use rand::{rngs::StdRng, SeedableRng};
-use tokio::{fs::create_dir_all, net::TcpListener};
+use tokio::{
+    fs::{create_dir_all, read},
+    net::TcpListener,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let f = 33;
-    let num_block_packet = 10;
+    let addrs = serde_json::from_slice::<Vec<SocketAddr>>(&read("./addrs.json").await?)?;
+    let spec = serde_json::from_slice::<SystemSpec>(&read("./spec.json").await?)?;
+    let index = args()
+        .nth(1)
+        .ok_or(anyhow::format_err!("missing index argument"))?
+        .parse::<usize>()?;
     let parameters = Parameters {
         chunk_size: 1 << 10,
-        k: (f + 1) * num_block_packet,
+        k: (spec.n - spec.f * 2) * spec.num_block_packet,
     };
-    let addrs = (1..=3 * f + 1)
-        .map(|i| SocketAddr::from(([127, 0, 0, i as _], 3000)))
-        .collect();
-    let index = 0;
 
     let mut rng = StdRng::seed_from_u64(117418);
     let (nodes, node_keys) = generate_nodes(addrs, &mut rng);
@@ -40,13 +49,14 @@ async fn main() -> anyhow::Result<()> {
         key: node_keys[&node_id].clone(),
         parameters: parameters.clone(),
         nodes: nodes.clone(),
-        num_block_packet,
+        num_block_packet: spec.num_block_packet,
         mesh: network[&node_id].clone(),
     };
     let store_dir = temp_dir().join("entropy").join(format!("{node_id:?}"));
     create_dir_all(&store_dir).await?;
     let store = Store::new(store_dir);
     let (router, app_context, broadcast_context) = build(config, store);
+    let router = router.route("/ok", get(|| async {}));
 
     let listener = TcpListener::bind(nodes[&node_id].addr).await?;
     let endpoint = async move {
