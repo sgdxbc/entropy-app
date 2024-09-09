@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "tools/control-spec"]
+members = [".", "tools/control", "tools/control-spec"]
 
 [package]
 name = "entropy-app"
