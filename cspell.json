@@ -9,6 +9,7 @@
         "dalek",
         "Hasher",
         "merkle",
+        "pkill",
         "prehashed",
         "reqwest",
         "rngs",

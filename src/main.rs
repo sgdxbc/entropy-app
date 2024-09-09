@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
         .ok_or(anyhow::format_err!("missing index argument"))?
         .parse::<usize>()?;
     let parameters = Parameters {
-        chunk_size: 1 << 10,
+        chunk_size: spec.chunk_size,
         k: (spec.n - spec.f * 2) * spec.num_block_packet,
     };
 

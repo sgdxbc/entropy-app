@@ -56,3 +56,12 @@ pub async fn rsync(host: impl AsRef<str>, path: impl AsRef<Path>) -> anyhow::Res
     anyhow::ensure!(status.success());
     Ok(())
 }
+
+pub async fn reload() -> anyhow::Result<()> {
+    let status = Command::new("cargo")
+        .args(["run", "-p", "control", "--bin", "reload"])
+        .status()
+        .await?;
+    anyhow::ensure!(status.success());
+    Ok(())
+}
