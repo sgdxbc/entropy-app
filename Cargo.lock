@@ -294,6 +294,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "control-spec",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",

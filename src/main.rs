@@ -26,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
         .nth(1)
         .ok_or(anyhow::format_err!("missing index argument"))?
         .parse::<usize>()?;
+    let addr = addrs[index];
     let parameters = Parameters {
         chunk_size: spec.chunk_size,
         k: (spec.n - spec.f * 2) * spec.num_block_packet,
@@ -38,12 +39,10 @@ async fn main() -> anyhow::Result<()> {
         .map(|config| (config.local_id, config.mesh))
         .collect::<HashMap<_, _>>();
 
-    let mut node_ids = nodes.keys().copied().collect::<Vec<_>>();
-    node_ids.sort_unstable();
-    let node_id = node_ids
-        .get(index)
-        .copied()
-        .ok_or(anyhow::format_err!("node index out of bound"))?;
+    let (&node_id, _) = nodes
+        .iter()
+        .find(|(_, node)| node.addr == addr)
+        .expect("can find node addr");
     let config = Config {
         local_id: node_id,
         key: node_keys[&node_id].clone(),
@@ -60,6 +59,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut addr = nodes[&node_id].addr;
     addr.set_ip([0; 4].into());
+    println!("listen {addr}");
     let listener = TcpListener::bind(addr).await?;
     let endpoint = async move {
         axum::serve(listener, router).await?;
