@@ -20,8 +20,9 @@ use tokio::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let addrs = serde_json::from_slice::<Vec<SocketAddr>>(&read("./addrs.json").await?)?;
     let spec = serde_json::from_slice::<SystemSpec>(&read("./spec.json").await?)?;
+    let addrs =
+        serde_json::from_slice::<Vec<SocketAddr>>(&read("./addrs.json").await?)?[..spec.n].to_vec();
     let index = args()
         .nth(1)
         .ok_or(anyhow::format_err!("missing index argument"))?

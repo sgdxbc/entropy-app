@@ -45,7 +45,7 @@ pub async fn ssh(host: impl AsRef<str>, command: impl AsRef<str>) -> anyhow::Res
         .stdout(std::process::Stdio::null())
         .status()
         .await?;
-    anyhow::ensure!(status.success());
+    anyhow::ensure!(status.success(), "{}", command.as_ref());
     Ok(())
 }
 
@@ -67,7 +67,7 @@ pub async fn reload(spec: SystemSpec) -> anyhow::Result<()> {
     for instance in output.regions.values().flatten() {
         sessions.spawn(ssh(
             instance.public_dns.clone(),
-            "pkill -x entropy-app || true",
+            "rm -r /tmp/entropy; pkill -x entropy-app; true",
         ));
         sessions.spawn(rsync(
             instance.public_dns.clone(),
@@ -79,8 +79,8 @@ pub async fn reload(spec: SystemSpec) -> anyhow::Result<()> {
         the_result = the_result.and_then(|_| anyhow::Ok(result??))
     }
     the_result?;
-    sleep(Duration::from_secs(1)).await;
     println!("cleanup done");
+    sleep(Duration::from_secs(1)).await;
 
     for (index, instance) in output
         .regions
@@ -90,7 +90,7 @@ pub async fn reload(spec: SystemSpec) -> anyhow::Result<()> {
         .take(spec.n)
         .enumerate()
     {
-        let command = format!("tmux new -d -s entropy-{index} \"./entropy-app {index}\"");
+        let command = format!("tmux new -d -s entropy-{index} \"./entropy-app {index} 2>./entropy-{index}.log\"");
         sessions.spawn(ssh(instance.public_dns.clone(), command));
     }
     let mut the_result = Ok(());
