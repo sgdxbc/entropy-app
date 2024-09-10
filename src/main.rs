@@ -20,6 +20,13 @@ use tokio::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let rlimit = nix::sys::resource::getrlimit(nix::sys::resource::Resource::RLIMIT_NOFILE)?;
+    nix::sys::resource::setrlimit(
+        nix::sys::resource::Resource::RLIMIT_NOFILE,
+        rlimit.1,
+        rlimit.1,
+    )?;
+
     let spec = serde_json::from_slice::<SystemSpec>(&read("./spec.json").await?)?;
     let addrs =
         serde_json::from_slice::<Vec<SocketAddr>>(&read("./addrs.json").await?)?[..spec.n].to_vec();

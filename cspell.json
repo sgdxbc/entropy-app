@@ -12,6 +12,7 @@
         "pkill",
         "prehashed",
         "reqwest",
+        "rlimit",
         "rngs",
         "rustc",
         "Seedable",

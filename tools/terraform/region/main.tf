@@ -30,7 +30,7 @@ module "_1" {
   state   = var.state
   type    = "c6a.16xlarge"
   #   n       = var.mode == "tput" ? 100 : 20
-  n = 3
+  n = 10
 }
 
 output "instances" {

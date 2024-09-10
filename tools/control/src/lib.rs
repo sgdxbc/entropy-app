@@ -27,6 +27,7 @@ impl TerraformOutput {
     }
 }
 
+#[derive(Debug)]
 pub struct Node {
     pub instance: Instance,
     pub local_index: usize,
@@ -97,18 +98,14 @@ pub async fn reload(spec: &SystemSpec) -> anyhow::Result<()> {
     for instance in output.instances() {
         sessions.spawn(ssh(
             instance.public_dns.clone(),
-            "rm -r /tmp/entropy; pkill -x entropy-app; true",
+            "rm -r /tmp/entropy; rm -r entropy-*.log; pkill -x entropy-app; true",
         ));
         sessions.spawn(rsync(
             instance.public_dns.clone(),
             Path::new("target/spec.json"),
         ));
     }
-    let mut the_result = Ok(());
-    while let Some(result) = sessions.join_next().await {
-        the_result = the_result.and_then(|_| anyhow::Ok(result??))
-    }
-    the_result?;
+    join_all(sessions).await?;
     println!("cleanup done");
     sleep(Duration::from_secs(1)).await;
 
@@ -121,13 +118,15 @@ pub async fn reload(spec: &SystemSpec) -> anyhow::Result<()> {
     let mut instance_commands = HashMap::<_, Vec<_>>::new();
     for (index, node) in output.nodes().take(spec.n).enumerate() {
         let command = format!(
-            "tmux new -d -s entropy-{index} \"./entropy-app {index} 2>./entropy-{index}.log\""
+            "tmux new -d -s entropy-{index} \"./entropy-app {index} 2>./entropy-{}.log\"",
+            node.local_index,
         );
         instance_commands
             .entry(node.instance.public_dns.clone())
             .or_default()
             .push(command);
     }
+    let mut sessions = JoinSet::new();
     for (host, commands) in instance_commands {
         sessions.spawn(async move {
             // for command in commands {
@@ -137,6 +136,12 @@ pub async fn reload(spec: &SystemSpec) -> anyhow::Result<()> {
             ssh(&host, commands.join(" && ")).await
         });
     }
+    join_all(sessions).await?;
+    println!("reload done");
+    Ok(())
+}
+
+async fn join_all(mut sessions: JoinSet<anyhow::Result<()>>) -> Result<(), anyhow::Error> {
     let mut the_result = Ok(());
     while let Some(result) = sessions.join_next().await {
         the_result = the_result.and_then(|_| anyhow::Ok(result??))

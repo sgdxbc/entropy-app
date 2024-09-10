@@ -184,6 +184,8 @@ impl Context {
                         }
                         response.error_for_status()?;
                     }
+
+                    store.remove(message.block_id).await?
                 }
             }
         }

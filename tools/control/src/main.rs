@@ -1,7 +1,8 @@
-use std::time::Duration;
+use std::{sync::LazyLock, time::Duration};
 
-use control::{reload, terraform_output};
+use control::{reload, terraform_output, Node};
 use control_spec::SystemSpec;
+use rand::{seq::SliceRandom, thread_rng};
 use tokio::time::sleep;
 
 const PUBLIC_KEY_LENGTH: usize = 32;
@@ -9,67 +10,77 @@ const PUBLIC_KEY_LENGTH: usize = 32;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let spec = SystemSpec {
-        n: 31,
-        f: 10,
+        n: 1000,
+        f: 333,
         num_block_packet: 10,
-        chunk_size: 1 << 10,
+        chunk_size: 1 << 15,
     };
     reload(&spec).await?;
     sleep(Duration::from_secs(1)).await;
 
-    let client = reqwest::Client::new();
     let output = terraform_output().await?;
     let nodes = output.nodes().take(spec.n).collect::<Vec<_>>();
-    let node0 = nodes.first().ok_or(anyhow::format_err!("empty nodes"))?;
-    for get_node in &nodes {
-        println!("start");
-        let (block_id, checksum, verifying_key) = client
-            .post(format!("{}/entropy/put", node0.url()))
+    for _ in 0..10 {
+        latency_session(&nodes).await?
+    }
+    Ok(())
+}
+
+static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+async fn latency_session(nodes: &[Node]) -> anyhow::Result<()> {
+    let put_node = nodes
+        .choose(&mut thread_rng())
+        .ok_or(anyhow::format_err!("empty nodes"))?;
+    println!("put @ {}", put_node.url());
+    let (block_id, checksum, verifying_key) = CLIENT
+        .post(format!("{}/entropy/put", put_node.url()))
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<(String, u64, [u8; PUBLIC_KEY_LENGTH])>()
+        .await?;
+    println!("put {block_id} checksum {checksum:08x}");
+    loop {
+        if let Some(latency) = CLIENT
+            .get(format!("{}/entropy/put/{block_id}", put_node.url()))
             .send()
             .await?
             .error_for_status()?
-            .json::<(String, u64, [u8; PUBLIC_KEY_LENGTH])>()
-            .await?;
-        println!("put {block_id} checksum {checksum:08x}");
-        loop {
-            if let Some(latency) = client
-                .get(format!("{}/entropy/put/{block_id}", node0.url()))
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<Option<Duration>>()
-                .await?
-            {
-                println!("{latency:?}");
-                break;
-            }
+            .json::<Option<Duration>>()
+            .await?
+        {
+            println!("{latency:?}");
+            break;
         }
+    }
+    sleep(Duration::from_secs(1)).await;
 
-        sleep(Duration::from_secs(1)).await;
-        println!("get {block_id}");
-        client
-            .post(format!("{}/entropy/get", get_node.url()))
-            .json(&(block_id.clone(), verifying_key))
+    let get_node = nodes
+        .choose(&mut thread_rng())
+        .ok_or(anyhow::format_err!("empty nodes"))?;
+    println!("get @ {} {block_id}", get_node.url());
+    CLIENT
+        .post(format!("{}/entropy/get", get_node.url()))
+        .json(&(block_id.clone(), verifying_key))
+        .send()
+        .await?
+        .error_for_status()?;
+    loop {
+        if let Some((latency, other_checksum)) = CLIENT
+            .get(format!("{}/entropy/get/{block_id}", get_node.url()))
             .send()
             .await?
-            .error_for_status()?;
-        loop {
-            if let Some((latency, other_checksum)) = client
-                .get(format!("{}/entropy/get/{block_id}", get_node.url()))
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<Option<(Duration, u64)>>()
-                .await?
-            {
-                println!("{latency:?} checksum {other_checksum:08x}");
-                anyhow::ensure!(other_checksum == checksum);
-                break;
-            }
+            .error_for_status()?
+            .json::<Option<(Duration, u64)>>()
+            .await?
+        {
+            println!("{latency:?} checksum {other_checksum:08x}");
+            anyhow::ensure!(other_checksum == checksum);
+            break;
         }
-        println!("wait for verifying post activity system stability");
-        sleep(Duration::from_secs(1)).await;
     }
-
+    println!("wait for verifying post activity system stability");
+    sleep(Duration::from_secs(1)).await;
     Ok(())
 }
