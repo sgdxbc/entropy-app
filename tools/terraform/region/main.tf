@@ -23,14 +23,16 @@ module "network" {
   source = "../group_network"
 }
 
+data "aws_region" "_1" {}
+
 module "_1" {
   source = "../group"
 
   network = module.network
   state   = var.state
-  type    = "c6a.16xlarge"
-  #   n       = var.mode == "tput" ? 100 : 20
-  n = 10
+  type    = data.aws_region._1.name == "af-south-1" ? "c5a.16xlarge" : "c6a.16xlarge"
+  n       = var.mode == "tput" ? 100 : 20
+  # n = 2
 }
 
 output "instances" {

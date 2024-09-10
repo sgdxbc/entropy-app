@@ -178,7 +178,15 @@ impl Context {
                             ))
                             .body(packet.to_bytes())
                             .send()
-                            .await?;
+                            .await;
+                        let response = match response {
+                            Ok(response) => response,
+                            Err(err) => {
+                                // TODO
+                                eprintln!("{err}");
+                                break;
+                            }
+                        };
                         if response.status() == StatusCode::NOT_FOUND {
                             break;
                         }

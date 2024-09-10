@@ -1,4 +1,4 @@
-use std::{sync::LazyLock, time::Duration};
+use std::{env::args, sync::LazyLock, time::Duration};
 
 use control::{reload, terraform_output, Node};
 use control_spec::SystemSpec;
@@ -10,11 +10,22 @@ const PUBLIC_KEY_LENGTH: usize = 32;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let spec = SystemSpec {
-        n: 1000,
-        f: 333,
+        n: 10000,
+        f: 3333,
         num_block_packet: 10,
         chunk_size: 1 << 15,
+        // degree: 6,
+        degree: 8,
     };
+    let block_size = (spec.n - spec.f * 2) * spec.num_block_packet * spec.chunk_size;
+    if block_size != 1 << 30 || spec.n != 10000 {
+        if args().count() > 1 {
+            anyhow::bail!("incorrect spec")
+        } else {
+            println!("WARN nonstandard spec")
+        }
+    }
+
     reload(&spec).await?;
     sleep(Duration::from_secs(1)).await;
 
@@ -54,7 +65,7 @@ async fn latency_session(nodes: &[Node]) -> anyhow::Result<()> {
             break;
         }
     }
-    sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(3)).await;
 
     let get_node = nodes
         .choose(&mut thread_rng())
@@ -81,6 +92,6 @@ async fn latency_session(nodes: &[Node]) -> anyhow::Result<()> {
         }
     }
     println!("wait for verifying post activity system stability");
-    sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(3)).await;
     Ok(())
 }

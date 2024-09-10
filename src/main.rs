@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut rng = StdRng::seed_from_u64(117418);
     let (nodes, node_keys) = generate_nodes(addrs, &mut rng);
-    let network = broadcast::ContextConfig::generate_network(&nodes, 6, &mut rng)?
+    let network = broadcast::ContextConfig::generate_network(&nodes, spec.degree, &mut rng)?
         .into_iter()
         .map(|config| (config.local_id, config.mesh))
         .collect::<HashMap<_, _>>();

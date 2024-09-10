@@ -9,4 +9,5 @@ pub struct SystemSpec {
     pub num_block_packet: usize,
     pub chunk_size: usize,
     // k is derived from num_block_packet and f
+    pub degree: usize,
 }
