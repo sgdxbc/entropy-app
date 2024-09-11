@@ -179,14 +179,15 @@ impl Context {
                             .body(packet.to_bytes())
                             .send()
                             .await;
-                        let response = match response {
-                            Ok(response) => response,
-                            Err(err) => {
-                                // TODO
-                                eprintln!("{err}");
-                                break;
-                            }
-                        };
+                        // let response = match response {
+                        //     Ok(response) => response,
+                        //     Err(err) => {
+                        //         // TODO
+                        //         eprintln!("{err}");
+                        //         break;
+                        //     }
+                        // };
+                        let response = response?;
                         if response.status() == StatusCode::NOT_FOUND {
                             break;
                         }
@@ -228,6 +229,7 @@ struct PutState {
 }
 
 struct GetState {
+    #[allow(unused)]
     verifying_key: VerifyingKey,
     scratch: Option<Packet>,
     start: Instant,
@@ -469,6 +471,7 @@ async fn upload_index(
         return StatusCode::NOT_FOUND.into_response();
     };
     if get.end.is_some() {
+        // println!("late upload for recover {index}");
         return StatusCode::NOT_FOUND.into_response();
     }
     if let Some(scratch) = &get.scratch {
@@ -480,9 +483,12 @@ async fn upload_index(
     let Ok(packet) = Packet::from_bytes(body, &state.config.parameters) else {
         return StatusCode::IM_A_TEAPOT.into_response();
     };
-    if packet
-        .verify(&get.verifying_key, &state.config.parameters)
-        .is_err()
+    // if packet
+    //     .verify(&get.verifying_key, &state.config.parameters)
+    if packet.block_id() != block_id
+        || packet
+            .verify_merkle_proof(&state.config.parameters)
+            .is_err()
     {
         return StatusCode::IM_A_TEAPOT.into_response();
     }
@@ -498,6 +504,7 @@ async fn upload_index(
         let block = packet
             .recover(&state.config.parameters)
             .expect("can recover");
+        // println!("recover done");
         let replaced = get.end.replace(Instant::now());
         assert!(replaced.is_none());
         get.checksum = FxBuildHasher.hash_one(

@@ -71,6 +71,10 @@ resource "aws_instance" "main" {
   vpc_security_group_ids = var.network.vpc_security_group_ids
   key_name               = var.key_name
 
+  root_block_device {
+    volume_size = 500
+  }
+
   enclave_options {
     enabled = true
   }

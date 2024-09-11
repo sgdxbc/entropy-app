@@ -37,7 +37,8 @@ impl Node {
     pub fn url(&self) -> String {
         format!(
             "http://{}:{}",
-            self.instance.public_dns,
+            // self.instance.public_dns,
+            self.instance.public_ip,
             self.local_index + 3000
         )
     }
@@ -98,7 +99,7 @@ pub async fn reload(spec: &SystemSpec) -> anyhow::Result<()> {
     for instance in output.instances() {
         sessions.spawn(ssh(
             instance.public_dns.clone(),
-            "rm -r /tmp/entropy; rm -r entropy-*.log; pkill -x entropy-app; true",
+            "pkill -x entropy-app; rm -rf /tmp/entropy; rm -f entropy-*.log; true",
         ));
         sessions.spawn(rsync(
             instance.public_dns.clone(),
@@ -141,7 +142,7 @@ pub async fn reload(spec: &SystemSpec) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn join_all(mut sessions: JoinSet<anyhow::Result<()>>) -> Result<(), anyhow::Error> {
+pub async fn join_all(mut sessions: JoinSet<anyhow::Result<()>>) -> Result<(), anyhow::Error> {
     let mut the_result = Ok(());
     while let Some(result) = sessions.join_next().await {
         the_result = the_result.and_then(|_| anyhow::Ok(result??))

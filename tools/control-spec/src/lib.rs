@@ -7,7 +7,8 @@ pub struct SystemSpec {
     // address list is long and fixed, send a dedicated file ahead of time for it
     // pub addrs: Vec<SocketAddr>,
     pub num_block_packet: usize,
+    pub block_size: usize,
     pub chunk_size: usize,
-    // k is derived from num_block_packet and f
+    // k is derived from block_size and chunk_size
     pub degree: usize,
 }

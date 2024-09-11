@@ -30,9 +30,9 @@ module "_1" {
 
   network = module.network
   state   = var.state
-  type    = data.aws_region._1.name == "af-south-1" ? "c5a.16xlarge" : "c6a.16xlarge"
+  type    = "r6i.4xlarge"
   n       = var.mode == "tput" ? 100 : 20
-  # n = 2
+  # n = 10
 }
 
 output "instances" {

@@ -18,7 +18,11 @@ use tokio::{
     net::TcpListener,
 };
 
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[tokio::main]
+// #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let rlimit = nix::sys::resource::getrlimit(nix::sys::resource::Resource::RLIMIT_NOFILE)?;
     nix::sys::resource::setrlimit(
@@ -37,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
     let addr = addrs[index];
     let parameters = Parameters {
         chunk_size: spec.chunk_size,
-        k: (spec.n - spec.f * 2) * spec.num_block_packet,
+        k: spec.block_size / spec.chunk_size,
     };
 
     let mut rng = StdRng::seed_from_u64(117418);

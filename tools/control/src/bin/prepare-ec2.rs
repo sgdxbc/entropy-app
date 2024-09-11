@@ -7,12 +7,12 @@ use tokio::{fs::write, task::JoinSet};
 async fn main() -> anyhow::Result<()> {
     #[derive(Debug, Clone, Copy)]
     enum Mode {
-        Latency,
-        Tput,
+        Public,
+        Private,
     }
     let mode = match args().nth(1).as_deref() {
-        Some("latency") => Mode::Latency,
-        Some("tput") => Mode::Tput,
+        Some("public") => Mode::Public,
+        Some("private") => Mode::Private,
         _ => anyhow::bail!("unimplemented"),
     };
 
@@ -22,8 +22,8 @@ async fn main() -> anyhow::Result<()> {
         .take_while(|node| node.local_index < 100)
         .map(|node| {
             let ip = match mode {
-                Mode::Latency => node.instance.public_ip,
-                Mode::Tput => node.instance.private_ip,
+                Mode::Public => node.instance.public_ip,
+                Mode::Private => node.instance.private_ip,
             };
             SocketAddr::from((ip, (node.local_index + 3000) as _))
         })

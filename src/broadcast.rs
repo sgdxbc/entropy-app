@@ -124,12 +124,19 @@ impl Context {
     ) -> anyhow::Result<()> {
         while let Some(buf) = forward_receiver.recv().await {
             // println!("forward to {endpoint}");
-            CLIENT
-                .post(format!("{endpoint}/broadcast"))
-                .body(buf.clone())
-                .send()
-                .await?
-                .error_for_status()?;
+            if let Err(err) = async {
+                CLIENT
+                    .post(format!("{endpoint}/broadcast"))
+                    .body(buf.clone())
+                    .send()
+                    .await?
+                    .error_for_status()?;
+                anyhow::Ok(())
+            }
+            .await
+            {
+                eprintln!("{err}")
+            }
         }
         Ok(())
     }
