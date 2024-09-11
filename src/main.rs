@@ -39,9 +39,15 @@ async fn main() -> anyhow::Result<()> {
         .ok_or(anyhow::format_err!("missing index argument"))?
         .parse::<usize>()?;
     let addr = addrs[index];
+
+    let mut k = spec.k();
+    if k > spec.num_correct_packet() {
+        k = spec.num_correct_packet();
+        eprintln!("reducing k to {k} for nonstandard parameters")
+    }
     let parameters = Parameters {
         chunk_size: spec.chunk_size,
-        k: spec.block_size / spec.chunk_size,
+        k,
     };
 
     let mut rng = StdRng::seed_from_u64(117418);

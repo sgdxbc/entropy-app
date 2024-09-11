@@ -1,18 +1,20 @@
 use std::{
     env::args,
+    fmt::Write,
     future::Future,
     pin::pin,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, LazyLock,
     },
-    time::Duration,
+    time::{Duration, UNIX_EPOCH},
 };
 
 use control::{join_all, reload, terraform_output, Node};
-use control_spec::SystemSpec;
+use control_spec::{Protocol::Entropy, SystemSpec};
 use rand::{seq::SliceRandom, thread_rng};
 use tokio::{
+    fs::write,
     task::JoinSet,
     time::{sleep, Instant},
 };
@@ -22,26 +24,30 @@ const PUBLIC_KEY_LENGTH: usize = 32;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let spec = SystemSpec {
-        n: 10000,
-        f: 3333,
+        // n: 10000,
+        // f: 3333,
+        n: 1000,
+        f: 333,
+
         num_block_packet: 10,
         block_size: 1 << 30,
         chunk_size: 32 << 10,
         degree: 6,
         // degree: 8,
+        protocol: Entropy,
     };
-    let test = true;
+    let deploy = false;
 
     let is_multiple = spec.block_size % spec.chunk_size == 0;
     anyhow::ensure!(is_multiple);
-    let k = spec.block_size / spec.chunk_size;
-    let correct_packet_count = (spec.n - spec.f * 2) * spec.num_block_packet * spec.chunk_size;
-    anyhow::ensure!(correct_packet_count >= k);
+    if deploy {
+        anyhow::ensure!(spec.num_correct_packet() >= spec.k());
+    }
     if spec.block_size != 1 << 30 || spec.n != 10000 {
-        if !test {
+        if deploy {
             anyhow::bail!("incorrect spec")
         } else {
-            println!("WARN nonstandard spec")
+            println!("WARN nonstandard spec");
         }
     }
 
@@ -49,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
     anyhow::ensure!(output.instances().count() * 100 >= spec.n);
     let nodes = output.nodes().take(spec.n).collect::<Vec<_>>();
 
+    let mut lines = String::new();
     let command = args().nth(1);
     if command.as_deref() == Some("latency") {
         reload(&spec).await?;
@@ -56,9 +63,15 @@ async fn main() -> anyhow::Result<()> {
         let mut ok_session = pin!(ok_session(&nodes));
 
         for _ in 0..10 {
-            tokio::select! {
-                result = &mut ok_session => result?,
-                result = latency_session(&nodes) => result.map(|_| ())?,
+            let result = 'session: {
+                tokio::select! {
+                    result = &mut ok_session => result?,
+                    result = latency_session(&nodes) => break 'session result?,
+                }
+                anyhow::bail!("unreachable")
+            };
+            for line in result {
+                writeln!(&mut lines, "{},{line}", spec.csv_row())?
             }
         }
     } else if command.as_deref() == Some("tput") {
@@ -72,6 +85,16 @@ async fn main() -> anyhow::Result<()> {
         }
     } else {
         reload(&spec).await?;
+    }
+
+    if deploy {
+        if let Some(command) = command {
+            write(
+                format!("./data/{}-{}.csv", command, UNIX_EPOCH.elapsed()?.as_secs()),
+                lines,
+            )
+            .await?
+        }
     }
 
     Ok(())
@@ -129,6 +152,7 @@ async fn latency_session(nodes: &[Node]) -> anyhow::Result<Vec<String>> {
         .await?;
     println!("put {block_id} checksum {checksum:08x}");
     let put_latency = loop {
+        sleep(Duration::from_secs(1)).await;
         if let Some(latency) = CLIENT
             .get(format!("{}/entropy/put/{block_id}", put_node.url()))
             .send()
@@ -154,6 +178,7 @@ async fn latency_session(nodes: &[Node]) -> anyhow::Result<Vec<String>> {
         .await?
         .error_for_status()?;
     let get_latency = loop {
+        sleep(Duration::from_secs(1)).await;
         if let Some((latency, other_checksum)) = CLIENT
             .get(format!("{}/entropy/get/{block_id}", get_node.url()))
             .send()
