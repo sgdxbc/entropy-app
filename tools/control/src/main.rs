@@ -28,22 +28,21 @@ async fn main() -> anyhow::Result<()> {
         // f: 3333,
         n: 1000,
         f: 333,
+        protocol: Entropy,
 
-        num_block_packet: 10,
-        block_size: 1 << 30,
         chunk_size: 32 << 10,
+        k: 32 << 10,
+        num_block_packet: 10,
         degree: 6,
         // degree: 8,
-        protocol: Entropy,
+        group_size: 100,
     };
     let deploy = false;
 
-    let is_multiple = spec.block_size % spec.chunk_size == 0;
-    anyhow::ensure!(is_multiple);
     if deploy {
-        anyhow::ensure!(spec.num_correct_packet() >= spec.k());
+        anyhow::ensure!(spec.num_correct_packet() >= spec.k);
     }
-    if spec.block_size != 1 << 30 || spec.n != 10000 {
+    if spec.block_size() != 1 << 30 || spec.n != 10000 {
         if deploy {
             anyhow::bail!("incorrect spec")
         } else {

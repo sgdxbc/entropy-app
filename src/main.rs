@@ -41,14 +41,9 @@ async fn main() -> anyhow::Result<()> {
         .parse::<usize>()?;
     let addr = addrs[index];
 
-    let mut k = spec.k();
-    if k > spec.num_correct_packet() {
-        k = spec.num_correct_packet();
-        eprintln!("reducing k to {k} for nonstandard parameters")
-    }
     let parameters = Parameters {
         chunk_size: spec.chunk_size,
-        k,
+        k: spec.k,
     };
 
     let mut rng = StdRng::seed_from_u64(117418);
@@ -58,10 +53,13 @@ async fn main() -> anyhow::Result<()> {
         .map(|config| (config.local_id, config.mesh))
         .collect::<HashMap<_, _>>();
     let nodes = Arc::new(nodes);
-    let ring = glacier::ring::ContextConfig::construct_ring(nodes.clone(), 0)?
-        .into_iter()
-        .map(|config| (config.local_id, config.mesh))
-        .collect::<HashMap<_, _>>();
+    let ring = glacier::ring::ContextConfig::construct_ring(
+        nodes.clone(),
+        spec.group_size, //
+    )?
+    .into_iter()
+    .map(|config| (config.local_id, config.mesh))
+    .collect::<HashMap<_, _>>();
 
     let (&node_id, _) = nodes
         .iter()
@@ -76,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
         mesh: network[&node_id].clone(),
         f: spec.f,
         ring_mesh: ring[&node_id].clone(),
-        group_size: 0,
+        group_size: spec.group_size,
     };
     let store_dir = temp_dir().join("entropy").join(format!("{node_id:?}"));
     create_dir_all(&store_dir).await?;
@@ -97,6 +95,8 @@ async fn main() -> anyhow::Result<()> {
         result = endpoint => result?,
         result = app_context.session() => result?,
         result = broadcast_context.session() => result?,
+        result = glacier_context.session() => result?,
+        result = ring_context.session() => result?,
     }
     anyhow::bail!("unreachable")
 }
