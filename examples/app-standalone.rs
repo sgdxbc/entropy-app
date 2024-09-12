@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env::temp_dir, net::SocketAddr, time::Duration};
+use std::{collections::HashMap, env::temp_dir, net::SocketAddr, sync::Arc, time::Duration};
 
 use ed25519_dalek::PUBLIC_KEY_LENGTH;
 use entropy_app::{
@@ -24,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
         .map(|i| SocketAddr::from(([127, 0, 0, i as _], 3000)))
         .collect();
     let (nodes, node_keys) = generate_nodes(addrs, &mut rng);
+    let nodes = Arc::new(nodes);
     let network = broadcast::ContextConfig::generate_network(&nodes, 6, &mut rng)?
         .into_iter()
         .map(|config| (config.local_id, config.mesh))
@@ -34,16 +35,19 @@ async fn main() -> anyhow::Result<()> {
         let config = Config {
             local_id: node_id,
             key,
-            parameters: parameters.clone(),
+            parameters,
             nodes: nodes.clone(),
             num_block_packet,
             mesh: network[&node_id].clone(),
             f,
+
+            ring_mesh: Default::default(),
+            group_size: 0,
         };
         let store_dir = temp_dir().join("entropy").join(format!("{node_id:?}"));
         create_dir_all(&store_dir).await?;
         let store = Store::new(store_dir);
-        let (router, app_context, broadcast_context) = build(config, store);
+        let (router, app_context, broadcast_context, _, _) = build(config, store);
 
         let listener = TcpListener::bind(nodes[&node_id].addr).await?;
         sessions.spawn(async move {

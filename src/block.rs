@@ -49,7 +49,7 @@ pub struct Packet {
     pub root_certificate: RootCertificate,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Parameters {
     pub chunk_size: usize,
     pub k: usize,

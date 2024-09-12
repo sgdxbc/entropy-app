@@ -33,13 +33,13 @@ pub mod ring;
 
 pub struct Context {
     config: ContextConfig,
-    store: Store,
+    store: Arc<Store>,
     ring_messages: UnboundedReceiver<Bytes>,
 }
 
 #[derive(Debug)]
 pub struct ContextConfig {
-    pub nodes: NodeBook,
+    pub nodes: Arc<NodeBook>,
     pub local_id: NodeId,
     pub parameters: Parameters,
 }
@@ -65,7 +65,7 @@ struct GetMessage {
 impl Context {
     pub fn new(
         config: ContextConfig,
-        store: Store,
+        store: Arc<Store>,
         ring_messages: UnboundedReceiver<Bytes>,
     ) -> Self {
         Self {
@@ -87,9 +87,9 @@ impl Context {
     }
 
     async fn recv_session(
-        nodes: NodeBook,
+        nodes: Arc<NodeBook>,
         local_id: NodeId,
-        store: Store,
+        store: Arc<Store>,
         parameters: Parameters,
         mut ring_messages: UnboundedReceiver<Bytes>,
     ) -> anyhow::Result<()> {

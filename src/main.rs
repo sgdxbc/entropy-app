@@ -2,13 +2,14 @@ use std::{
     collections::HashMap,
     env::{args, temp_dir},
     net::SocketAddr,
+    sync::Arc,
 };
 
 use axum::routing::get;
 use control_spec::SystemSpec;
 use entropy_app::{
     block::Parameters,
-    broadcast, generate_nodes,
+    broadcast, generate_nodes, glacier,
     node::{build, Config},
     store::Store,
 };
@@ -56,6 +57,11 @@ async fn main() -> anyhow::Result<()> {
         .into_iter()
         .map(|config| (config.local_id, config.mesh))
         .collect::<HashMap<_, _>>();
+    let nodes = Arc::new(nodes);
+    let ring = glacier::ring::ContextConfig::construct_ring(nodes.clone(), 0)?
+        .into_iter()
+        .map(|config| (config.local_id, config.mesh))
+        .collect::<HashMap<_, _>>();
 
     let (&node_id, _) = nodes
         .iter()
@@ -64,16 +70,19 @@ async fn main() -> anyhow::Result<()> {
     let config = Config {
         local_id: node_id,
         key: node_keys[&node_id].clone(),
-        parameters: parameters.clone(),
+        parameters,
         nodes: nodes.clone(),
         num_block_packet: spec.num_block_packet,
         mesh: network[&node_id].clone(),
         f: spec.f,
+        ring_mesh: ring[&node_id].clone(),
+        group_size: 0,
     };
     let store_dir = temp_dir().join("entropy").join(format!("{node_id:?}"));
     create_dir_all(&store_dir).await?;
     let store = Store::new(store_dir);
-    let (router, app_context, broadcast_context) = build(config, store);
+    let (router, app_context, broadcast_context, glacier_context, ring_context) =
+        build(config, store);
     let router = router.route("/ok", get(|| async {}));
 
     let mut addr = nodes[&node_id].addr;

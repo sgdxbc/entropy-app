@@ -31,7 +31,7 @@ use crate::{
 
 pub struct Context {
     config: ContextConfig,
-    store: Store,
+    store: Arc<Store>,
     broadcast_messages: UnboundedReceiver<Bytes>,
 }
 
@@ -64,7 +64,7 @@ struct GetMessage {
 impl Context {
     pub fn new(
         config: ContextConfig,
-        store: Store,
+        store: Arc<Store>,
         broadcast_messages: UnboundedReceiver<Bytes>,
     ) -> Self {
         Self {
@@ -89,7 +89,7 @@ impl Context {
     async fn recv_session(
         nodes: &NodeBook,
         local_id: NodeId,
-        store: Store,
+        store: Arc<Store>,
         parameters: Parameters,
         num_block_packet: usize,
         mut broadcast_messages: UnboundedReceiver<Bytes>,
