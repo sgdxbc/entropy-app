@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::repeat_with};
+use std::{collections::HashMap, iter::repeat_with, ops::Bound, sync::Arc};
 
 use axum::{
     extract::{Path, State},
@@ -10,10 +10,11 @@ use axum::{
 use bincode::Options;
 use bytes::Bytes;
 use futures::future::select_all;
+use primitive_types::H256;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-use crate::{NodeId, CLIENT};
+use crate::{NodeBook, NodeId, CLIENT};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Message {
@@ -25,13 +26,14 @@ struct Message {
 pub struct ContextConfig {
     pub local_id: NodeId,
     pub mesh: Vec<String>,
+    pub nodes: Arc<NodeBook>,
 }
 
 pub struct Context {
     config: ContextConfig,
     upcall: UnboundedSender<Bytes>,
     messages: UnboundedReceiver<BytesTtl>,
-    invokes: UnboundedReceiver<BytesTtl>,
+    invokes: UnboundedReceiver<(H256, BytesTtl)>,
 }
 
 pub type BytesTtl = (Bytes, u32);
@@ -45,7 +47,7 @@ impl Context {
             self.config.local_id,
             self.messages,
             self.upcall,
-            forward_senders.clone(),
+            forward_senders,
         );
         let forward_sessions =
             self.config
@@ -57,7 +59,7 @@ impl Context {
                 });
         let forward_sessions = select_all(forward_sessions);
         let invoke_session =
-            Self::invoke_session(self.config.local_id, self.invokes, forward_senders);
+            Self::invoke_session(self.config.local_id, self.config.nodes, self.invokes);
         tokio::select! {
             // is it true that both of the below sessions lead to graceful shutdown?
             result = recv_session => return result,
@@ -134,11 +136,11 @@ impl Context {
 
     async fn invoke_session(
         local_id: NodeId,
-        mut invokes: UnboundedReceiver<BytesTtl>,
-        forward_senders: Vec<UnboundedSender<BytesTtl>>,
+        nodes: Arc<NodeBook>,
+        mut invokes: UnboundedReceiver<(H256, BytesTtl)>,
     ) -> anyhow::Result<()> {
         let mut seq = 0;
-        while let Some((payload, mut ttl)) = invokes.recv().await {
+        while let Some((target, (payload, ttl))) = invokes.recv().await {
             seq += 1;
             let message = Message {
                 source: local_id,
@@ -146,13 +148,18 @@ impl Context {
                 payload,
             };
             let buf = Bytes::from(bincode::options().serialize(&message)?);
-            for sender in &forward_senders {
-                if ttl == 0 {
-                    break;
-                }
-                ttl -= 1;
-                sender.send((buf.clone(), ttl))?;
-            }
+
+            let (_, node) = nodes.range(target..).next().unwrap_or(
+                nodes
+                    .first_key_value()
+                    .ok_or(anyhow::format_err!("empty nodes"))?,
+            );
+            CLIENT
+                .post(format!("{}/ring/{ttl}", node.endpoint()))
+                .body(buf)
+                .send()
+                .await?
+                .error_for_status()?;
         }
         Ok(())
     }
@@ -175,7 +182,7 @@ async fn handle(
 }
 
 pub struct Api {
-    pub invoke_sender: UnboundedSender<BytesTtl>,
+    pub invoke_sender: UnboundedSender<(H256, BytesTtl)>,
     pub upcall: UnboundedReceiver<Bytes>,
 }
 
@@ -199,4 +206,31 @@ pub fn make_service(config: ContextConfig) -> (Router, Context, Api) {
     (router, context, api)
 }
 
-impl ContextConfig {}
+impl ContextConfig {
+    pub fn construct_ring(nodes: Arc<NodeBook>, mesh_degree: usize) -> anyhow::Result<Vec<Self>> {
+        anyhow::ensure!(mesh_degree >= 1);
+        let n = nodes.len();
+        anyhow::ensure!(n > mesh_degree);
+        let keys = nodes.keys().copied().collect::<Vec<_>>();
+        let configs = keys
+            .iter()
+            .map(|&id| {
+                let mesh = nodes
+                    .range((Bound::Excluded(id), Bound::Unbounded))
+                    .chain(nodes.iter())
+                    .take(mesh_degree)
+                    .map(|(_, node)| node.endpoint())
+                    .collect();
+                (
+                    id,
+                    Self {
+                        local_id: id,
+                        mesh,
+                        nodes: nodes.clone(),
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        Ok(configs.into_values().collect())
+    }
+}

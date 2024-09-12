@@ -16,7 +16,9 @@ use axum::{
 use bincode::Options as _;
 use bytes::Bytes;
 use ed25519_dalek::{SigningKey, VerifyingKey, PUBLIC_KEY_LENGTH};
+use primitive_types::H256;
 use rand::{thread_rng, RngCore as _};
+use ring::BytesTtl;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -200,7 +202,7 @@ impl Context {
 pub struct ServerState {
     put: Arc<Mutex<HashMap<MerkleHash, PutState>>>,
     get: Arc<Mutex<HashMap<MerkleHash, GetState>>>,
-    broadcast: UnboundedSender<Bytes>,
+    ring: UnboundedSender<(H256, BytesTtl)>,
     config: Arc<ServiceConfig>,
     packet_distr: Arc<PacketDistr>,
 }
@@ -210,6 +212,7 @@ pub struct ServiceConfig {
     pub key: SigningKey,
     pub parameters: Parameters,
     pub f: usize,
+    pub n: usize,
 }
 
 struct PutState {
@@ -260,7 +263,10 @@ async fn benchmark_put(State(state): State<ServerState>) -> Response {
     );
     // the broadcast here will bypass loopback
     // TODO a decent implementation should store packets locally as well
-    state.broadcast.send(bytes).expect("can send");
+    state
+        .ring
+        .send((block_id, (bytes, state.config.n as _)))
+        .expect("can send");
     Json((
         format!("{block_id:?}"),
         checksum,
@@ -365,7 +371,10 @@ async fn benchmark_get(
             .serialize(&Message::Get(get))
             .expect("can serialize"),
     );
-    state.broadcast.send(bytes).expect("can send");
+    state
+        .ring
+        .send((block_id, (bytes, state.config.n as _)))
+        .expect("can send");
     StatusCode::OK.into_response()
 }
 
@@ -497,7 +506,7 @@ async fn upload_index(
     StatusCode::OK.into_response()
 }
 
-pub fn make_service(config: ServiceConfig, broadcast: UnboundedSender<Bytes>) -> Router {
+pub fn make_service(config: ServiceConfig, ring: UnboundedSender<(H256, BytesTtl)>) -> Router {
     Router::new()
         .route("/put", post(benchmark_put))
         .route("/put/:block_id", get(poll_put))
@@ -508,7 +517,7 @@ pub fn make_service(config: ServiceConfig, broadcast: UnboundedSender<Bytes>) ->
         .route("/upload/:block_id", post(upload))
         .route("/upload/:block_id/:index", post(upload_index))
         .with_state(ServerState {
-            broadcast,
+            ring,
             packet_distr: PacketDistr::new(config.parameters.k).into(),
             config: config.into(),
             put: Default::default(),

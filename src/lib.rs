@@ -46,7 +46,7 @@ pub struct Node {
     pub addr: std::net::SocketAddr,
 }
 
-pub type NodeBook = std::collections::HashMap<NodeId, Node>;
+pub type NodeBook = std::collections::BTreeMap<NodeId, Node>;
 
 pub fn generate_nodes(
     addrs: Vec<std::net::SocketAddr>,

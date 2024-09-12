@@ -38,7 +38,7 @@ pub struct Context {
 #[derive(Debug)]
 pub struct ContextConfig {
     pub local_id: NodeId,
-    pub nodes: NodeBook,
+    pub nodes: Arc<NodeBook>,
     pub parameters: Parameters,
     pub num_block_packet: usize,
 }

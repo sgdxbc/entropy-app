@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::Router;
 use ed25519_dalek::SigningKey;
 
@@ -15,6 +17,7 @@ pub struct Config {
 }
 
 pub fn build(config: Config, store: Store) -> (Router, app::Context, broadcast::Context) {
+    let nodes = Arc::new(config.nodes);
     let broadcast_config = broadcast::ContextConfig {
         local_id: config.local_id,
         mesh: config.mesh,
@@ -30,7 +33,7 @@ pub fn build(config: Config, store: Store) -> (Router, app::Context, broadcast::
     let app_router = app::make_service(app_service_config, broadcast_api.invoke_sender);
     let app_context_config = app::ContextConfig {
         local_id: config.local_id,
-        nodes: config.nodes,
+        nodes,
         parameters: config.parameters,
         num_block_packet: config.num_block_packet,
     };
