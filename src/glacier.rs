@@ -1,8 +1,6 @@
 use std::{
-    cmp::Reverse,
-    collections::HashMap,
-    convert::identity,
-    hash::BuildHasher,
+    collections::{HashMap, HashSet},
+    hash::BuildHasher as _,
     iter::repeat_with,
     sync::{Arc, Mutex},
     time::Instant,
@@ -11,11 +9,11 @@ use std::{
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::{IntoResponse as _, Response},
     routing::{get, post},
     Json, Router,
 };
-use bincode::Options;
+use bincode::Options as _;
 use bytes::Bytes;
 use ed25519_dalek::{SigningKey, VerifyingKey, PUBLIC_KEY_LENGTH};
 use rand::{thread_rng, RngCore as _};
@@ -32,15 +30,14 @@ use crate::{
 pub struct Context {
     config: ContextConfig,
     store: Store,
-    broadcast_messages: UnboundedReceiver<Bytes>,
+    ring_messages: UnboundedReceiver<Bytes>,
 }
 
 #[derive(Debug)]
 pub struct ContextConfig {
-    pub local_id: NodeId,
     pub nodes: NodeBook,
+    pub local_id: NodeId,
     pub parameters: Parameters,
-    pub num_block_packet: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -65,78 +62,73 @@ impl Context {
     pub fn new(
         config: ContextConfig,
         store: Store,
-        broadcast_messages: UnboundedReceiver<Bytes>,
+        ring_messages: UnboundedReceiver<Bytes>,
     ) -> Self {
         Self {
             config,
             store,
-            broadcast_messages,
+            ring_messages,
         }
     }
 
     pub async fn session(self) -> anyhow::Result<()> {
         Self::recv_session(
-            &self.config.nodes,
+            self.config.nodes,
             self.config.local_id,
             self.store,
             self.config.parameters,
-            self.config.num_block_packet,
-            self.broadcast_messages,
+            self.ring_messages,
         )
         .await
     }
 
     async fn recv_session(
-        nodes: &NodeBook,
+        nodes: NodeBook,
         local_id: NodeId,
         store: Store,
         parameters: Parameters,
-        num_block_packet: usize,
-        mut broadcast_messages: UnboundedReceiver<Bytes>,
+        mut ring_messages: UnboundedReceiver<Bytes>,
     ) -> anyhow::Result<()> {
-        'recv: while let Some(bytes) = broadcast_messages.recv().await {
+        'recv: while let Some(bytes) = ring_messages.recv().await {
             let Ok(message) = bincode::options().deserialize::<Message>(&bytes) else {
                 eprintln!("malformed broadcast message");
                 continue;
             };
             match message {
                 Message::Put(message) => {
-                    // TODO deduplicate?
-                    // TODO concurrent? probably not very useful when there are a lot of nodes
-                    for _ in 0..num_block_packet {
-                        let response = CLIENT
-                            .post(format!(
-                                "{}/entropy/encode/{:?}/{:?}",
-                                nodes[&message.node_id].endpoint(),
-                                message.block_id,
-                                local_id,
-                            ))
-                            .send()
-                            .await?;
-                        if response.status() == StatusCode::NOT_FOUND {
-                            eprintln!("put service unavailable");
-                            continue 'recv;
-                        }
-                        let packet = Packet::from_bytes(
-                            response.error_for_status()?.bytes().await?,
-                            &parameters,
-                        )?;
-                        // if packet
-                        //     .verify(&nodes[&message.node_id].verifying_key, &parameters)
-                        if packet.block_id() != message.block_id
-                            || packet.verify_merkle_proof(&parameters).is_err()
-                        {
-                            eprintln!("verify failed");
-                            // do not request more packets from a faulty sender
-                            // TODO discard received packets? probably no need since those are
-                            // verified i.e. are "good" storage
-                            continue 'recv;
-                        }
-                        store.save(packet).await?
-                    }
                     let response = CLIENT
                         .post(format!(
-                            "{}/entropy/persist/{:?}/{:?}",
+                            "{}/glacier/encode/{:?}/{:?}",
+                            nodes[&message.node_id].endpoint(),
+                            message.block_id,
+                            local_id,
+                        ))
+                        .send()
+                        .await?;
+                    if response.status() == StatusCode::NOT_FOUND {
+                        eprintln!("put service unavailable");
+                        continue 'recv;
+                    }
+                    let packet = Packet::from_bytes(
+                        response.error_for_status()?.bytes().await?,
+                        &parameters,
+                    )?;
+                    // if packet
+                    //     .verify(&nodes[&message.node_id].verifying_key, &parameters)
+                    if packet.block_id() != message.block_id
+                        || packet.verify_merkle_proof(&parameters).is_err()
+                    {
+                        eprintln!("verify failed");
+                        // do not request more packets from a faulty sender
+                        // TODO discard received packets? probably no need since those are
+                        // verified i.e. are "good" storage
+                        continue 'recv;
+                    }
+                    store.save(packet).await?;
+
+                    let response = CLIENT
+                        .post(format!(
+                            "{}/glacier/persist/{:?}/{:?}",
                             nodes[&message.node_id].endpoint(),
                             message.block_id,
                             local_id
@@ -172,7 +164,7 @@ impl Context {
                     while let Some((index, packet)) = packets.next().await? {
                         let response = CLIENT
                             .post(format!(
-                                "{}/entropy/upload/{:?}/{index}",
+                                "{}/glacier/upload/{:?}/{index}",
                                 nodes[&message.node_id].endpoint(),
                                 message.block_id
                             ))
@@ -215,7 +207,6 @@ pub struct ServiceConfig {
     pub local_id: NodeId,
     pub key: SigningKey,
     pub parameters: Parameters,
-    // realistically speaking this should be derived from estimated number of nodes
     pub f: usize,
 }
 
@@ -223,8 +214,7 @@ struct PutState {
     // the major of data is `Vec<Bytes>`, which is supposed to be reference counted already
     // but there're still other things, also cloning a several hundred K vec is not cheap anyway
     block: Arc<Block>,
-    num_node_packet: HashMap<NodeId, usize>,
-    num_persist_packet: Vec<usize>,
+    persist_nodes: HashSet<NodeId>,
     start: Instant,
     end: Option<Instant>,
 }
@@ -252,8 +242,7 @@ async fn benchmark_put(State(state): State<ServerState>) -> Response {
     let put = PutState {
         block: block.into(),
         start,
-        num_node_packet: Default::default(),
-        num_persist_packet: Default::default(),
+        persist_nodes: Default::default(),
         end: None,
     };
     let block_id = put.block.id();
@@ -297,7 +286,7 @@ async fn encode(
     let Ok(block_id) = block_id.parse::<MerkleHash>() else {
         return StatusCode::IM_A_TEAPOT.into_response();
     };
-    let Ok(node_id) = node_id.parse::<NodeId>() else {
+    let Ok(_node_id) = node_id.parse::<NodeId>() else {
         return StatusCode::IM_A_TEAPOT.into_response();
     };
     let block;
@@ -306,7 +295,6 @@ async fn encode(
         let Some(put) = put.get_mut(&block_id) else {
             return StatusCode::NOT_FOUND.into_response();
         };
-        *put.num_node_packet.entry(node_id).or_default() += 1;
         block = put.block.clone();
     }
     let packet = block
@@ -329,22 +317,11 @@ async fn ack_persistence(
     let Some(put) = state_put.get_mut(&block_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let count = put.num_node_packet.remove(&node_id).unwrap_or_default();
-    let pos = put
-        .num_persist_packet
-        .binary_search_by_key(&Reverse(count), |other_count| Reverse(*other_count))
-        .unwrap_or_else(identity);
-    put.num_persist_packet.insert(pos, count);
-    if put.num_persist_packet.len() >= state.config.f
-        && put
-            .num_persist_packet
-            .iter()
-            .skip(state.config.f)
-            .sum::<usize>()
-            >= state.config.parameters.k
-    {
+    put.persist_nodes.insert(node_id);
+    if put.persist_nodes.len() >= state.config.f + state.config.parameters.k {
         put.end.get_or_insert_with(Instant::now);
     }
+
     // a basic garbage collection
     // it is not very useful in write throughput evaluation since that should scale up to all puts
     // are concurrent

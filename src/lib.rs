@@ -1,6 +1,7 @@
 pub mod app;
 pub mod block;
 pub mod broadcast; // should be pub/sub but no plan to implement topic
+pub mod glacier;
 pub mod node;
 pub mod store;
 

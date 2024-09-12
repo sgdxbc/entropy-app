@@ -11,6 +11,7 @@ pub struct Config {
     pub nodes: NodeBook,
     pub num_block_packet: usize,
     pub mesh: Vec<String>,
+    pub f: usize,
 }
 
 pub fn build(config: Config, store: Store) -> (Router, app::Context, broadcast::Context) {
@@ -24,7 +25,7 @@ pub fn build(config: Config, store: Store) -> (Router, app::Context, broadcast::
         local_id: config.local_id,
         key: config.key,
         parameters: config.parameters.clone(),
-        num_node: config.nodes.len(),
+        f: config.f,
     };
     let app_router = app::make_service(app_service_config, broadcast_api.invoke_sender);
     let app_context_config = app::ContextConfig {

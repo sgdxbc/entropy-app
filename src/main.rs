@@ -68,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
         nodes: nodes.clone(),
         num_block_packet: spec.num_block_packet,
         mesh: network[&node_id].clone(),
+        f: spec.f,
     };
     let store_dir = temp_dir().join("entropy").join(format!("{node_id:?}"));
     create_dir_all(&store_dir).await?;

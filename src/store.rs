@@ -67,7 +67,7 @@ impl Store {
         }))
     }
 
-    pub async fn load_iter(&self, block_id: MerkleHash) -> anyhow::Result<Option<LoadIter>> {
+    pub async fn load_singletons(&self, block_id: MerkleHash) -> anyhow::Result<Option<LoadIter>> {
         let packet_dir = self.packet_dir(block_id);
         if !packet_dir.is_dir() {
             return Ok(None);
