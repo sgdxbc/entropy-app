@@ -27,6 +27,8 @@ use crate::{
     NodeBook, NodeId, CLIENT,
 };
 
+pub mod ring;
+
 pub struct Context {
     config: ContextConfig,
     store: Store,
