@@ -7,7 +7,7 @@ use std::{
 };
 
 use axum::{
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::StatusCode,
     response::{IntoResponse as _, Response},
     routing::{get, post},
@@ -263,6 +263,7 @@ async fn benchmark_put(State(state): State<ServerState>) -> Response {
     );
     // the broadcast here will bypass loopback
     // TODO a decent implementation should store packets locally as well
+    // eprintln!("ring send target {block_id}");
     state
         .ring
         .send((block_id, (bytes, state.config.n as _)))
@@ -291,6 +292,7 @@ async fn encode(
     State(state): State<ServerState>,
     Path((block_id, node_id)): Path<(String, String)>,
 ) -> Response {
+    // eprintln!("{block_id} {node_id}");
     let Ok(block_id) = block_id.parse::<MerkleHash>() else {
         return StatusCode::IM_A_TEAPOT.into_response();
     };
@@ -516,6 +518,7 @@ pub fn make_service(config: ServiceConfig, ring: UnboundedSender<(H256, BytesTtl
         .route("/get/:block_id", get(poll_get))
         .route("/upload/:block_id", post(upload))
         .route("/upload/:block_id/:index", post(upload_index))
+        .layer(DefaultBodyLimit::max(64 << 20))
         .with_state(ServerState {
             ring,
             packet_distr: PacketDistr::new(config.parameters.k).into(),

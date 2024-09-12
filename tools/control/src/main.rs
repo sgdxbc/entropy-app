@@ -11,7 +11,10 @@ use std::{
 };
 
 use control::{join_all, reload, terraform_output, Node};
-use control_spec::{Protocol::Entropy, SystemSpec};
+use control_spec::{
+    Protocol::{self, Entropy, Glacier},
+    SystemSpec,
+};
 use rand::{seq::SliceRandom, thread_rng};
 use tokio::{
     fs::write,
@@ -23,20 +26,37 @@ const PUBLIC_KEY_LENGTH: usize = 32;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    let spec = SystemSpec {
-        // n: 10000,
-        // f: 3333,
-        n: 1000,
-        f: 333,
-        protocol: Entropy,
+    fn entropy(f: usize) -> SystemSpec {
+        let n = 3 * f + 1;
+        let num_block_packet = 10;
+        SystemSpec {
+            n,
+            f,
+            protocol: Entropy,
+            chunk_size: 32 << 10,
+            k: ((n - 2 * f) * num_block_packet).min(32 << 10),
+            num_block_packet,
+            degree: 6,
+            group_size: 0,
+        }
+    }
 
-        chunk_size: 32 << 10,
-        k: 32 << 10,
-        num_block_packet: 10,
-        degree: 6,
-        // degree: 8,
-        group_size: 100,
-    };
+    fn glacier(n: usize, f: usize) -> SystemSpec {
+        let group_size = 3 * f + 1;
+        SystemSpec {
+            n,
+            f,
+            protocol: Glacier,
+            chunk_size: 32 << 20,
+            k: (group_size - 2 * f).min(32),
+            num_block_packet: 0,
+            degree: 0,
+            group_size,
+        }
+    }
+
+    // let spec = entropy(333);
+    let spec = glacier(1000, 33);
     let deploy = false;
 
     if deploy {
@@ -65,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
             let result = 'session: {
                 tokio::select! {
                     result = &mut ok_session => result?,
-                    result = latency_session(&nodes) => break 'session result?,
+                    result = latency_session(spec.protocol, &nodes) => break 'session result?,
                 }
                 anyhow::bail!("unreachable")
             };
@@ -137,13 +157,18 @@ fn ok_session(nodes: &[Node]) -> impl Future<Output = anyhow::Result<()>> + Send
     }
 }
 
-async fn latency_session(nodes: &[Node]) -> anyhow::Result<Vec<String>> {
+async fn latency_session(protocol: Protocol, nodes: &[Node]) -> anyhow::Result<Vec<String>> {
+    let name = match protocol {
+        Protocol::Entropy => "entropy",
+        Protocol::Glacier => "glacier",
+        Protocol::Replication => "replication",
+    };
     let put_node = nodes
         .choose(&mut thread_rng())
         .ok_or(anyhow::format_err!("empty nodes"))?;
     println!("put @ {}", put_node.url());
     let (block_id, checksum, verifying_key) = CLIENT
-        .post(format!("{}/entropy/put", put_node.url()))
+        .post(format!("{}/{name}/put", put_node.url()))
         .send()
         .await?
         .error_for_status()?
@@ -153,7 +178,7 @@ async fn latency_session(nodes: &[Node]) -> anyhow::Result<Vec<String>> {
     let put_latency = loop {
         sleep(Duration::from_secs(1)).await;
         if let Some(latency) = CLIENT
-            .get(format!("{}/entropy/put/{block_id}", put_node.url()))
+            .get(format!("{}/{name}/put/{block_id}", put_node.url()))
             .send()
             .await?
             .error_for_status()?
@@ -171,7 +196,7 @@ async fn latency_session(nodes: &[Node]) -> anyhow::Result<Vec<String>> {
         .ok_or(anyhow::format_err!("empty nodes"))?;
     println!("get @ {} {block_id}", get_node.url());
     CLIENT
-        .post(format!("{}/entropy/get", get_node.url()))
+        .post(format!("{}/{name}/get", get_node.url()))
         .json(&(block_id.clone(), verifying_key))
         .send()
         .await?
@@ -179,7 +204,7 @@ async fn latency_session(nodes: &[Node]) -> anyhow::Result<Vec<String>> {
     let get_latency = loop {
         sleep(Duration::from_secs(1)).await;
         if let Some((latency, other_checksum)) = CLIENT
-            .get(format!("{}/entropy/get/{block_id}", get_node.url()))
+            .get(format!("{}/{name}/get/{block_id}", get_node.url()))
             .send()
             .await?
             .error_for_status()?

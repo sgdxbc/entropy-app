@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::repeat_with, ops::Bound, sync::Arc};
+use std::{collections::HashMap, future::pending, iter::repeat_with, ops::Bound, sync::Arc};
 
 use axum::{
     extract::{Path, State},
@@ -9,7 +9,7 @@ use axum::{
 };
 use bincode::Options;
 use bytes::Bytes;
-use futures::future::select_all;
+use futures::{future::select_all, FutureExt as _};
 use primitive_types::H256;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -40,8 +40,9 @@ pub type BytesTtl = (Bytes, u32);
 
 impl Context {
     pub async fn session(self) -> anyhow::Result<()> {
+        let mesh_len = self.config.mesh.len();
         let (forward_senders, forward_receivers) = repeat_with(unbounded_channel)
-            .take(self.config.mesh.len())
+            .take(mesh_len)
             .unzip::<_, _, Vec<_>, Vec<_>>();
         let recv_session = Self::recv_session(
             self.config.local_id,
@@ -57,7 +58,11 @@ impl Context {
                 .map(|(endpoint, forward_receiver)| {
                     Box::pin(Self::forward_session(endpoint, forward_receiver))
                 });
-        let forward_sessions = select_all(forward_sessions);
+        let forward_sessions = if mesh_len != 0 {
+            select_all(forward_sessions).left_future()
+        } else {
+            pending().right_future()
+        };
         let invoke_session =
             Self::invoke_session(self.config.local_id, self.config.nodes, self.invokes);
         tokio::select! {
@@ -149,11 +154,12 @@ impl Context {
             };
             let buf = Bytes::from(bincode::options().serialize(&message)?);
 
-            let (_, node) = nodes.range(target..).next().unwrap_or(
-                nodes
-                    .first_key_value()
-                    .ok_or(anyhow::format_err!("empty nodes"))?,
-            );
+            let (_, node) = nodes
+                .range(target..)
+                .chain(nodes.iter())
+                .next()
+                .ok_or(anyhow::format_err!("empty nodes"))?;
+            // eprintln!("send to ring @ {}", node.endpoint());
             CLIENT
                 .post(format!("{}/ring/{ttl}", node.endpoint()))
                 .body(buf)
@@ -191,7 +197,7 @@ pub fn make_service(config: ContextConfig) -> (Router, Context, Api) {
     let (invoke_sender, invoke_receiver) = unbounded_channel();
     let (upcall_sender, upcall_receiver) = unbounded_channel();
     let router = Router::new()
-        .route("/", post(handle))
+        .route("/:ttl", post(handle))
         .with_state(ServerState { message_sender });
     let context = Context {
         config,
@@ -208,7 +214,7 @@ pub fn make_service(config: ContextConfig) -> (Router, Context, Api) {
 
 impl ContextConfig {
     pub fn construct_ring(nodes: Arc<NodeBook>, mesh_degree: usize) -> anyhow::Result<Vec<Self>> {
-        anyhow::ensure!(mesh_degree >= 1);
+        // anyhow::ensure!(mesh_degree >= 1);
         let n = nodes.len();
         anyhow::ensure!(n > mesh_degree);
         let keys = nodes.keys().copied().collect::<Vec<_>>();

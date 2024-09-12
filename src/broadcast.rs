@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    future::pending,
     iter::{repeat, repeat_with},
 };
 
@@ -12,7 +13,7 @@ use axum::{
 };
 use bincode::Options;
 use bytes::Bytes;
-use futures::future::select_all;
+use futures::{future::select_all, FutureExt};
 use rand::{seq::SliceRandom, Rng};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -40,8 +41,9 @@ pub struct Context {
 
 impl Context {
     pub async fn session(self) -> anyhow::Result<()> {
+        let mesh_len = self.config.mesh.len();
         let (forward_senders, forward_receivers) = repeat_with(unbounded_channel)
-            .take(self.config.mesh.len())
+            .take(mesh_len)
             .unzip::<_, _, Vec<_>, Vec<_>>();
         let recv_session = Self::recv_session(
             self.config.local_id,
@@ -57,7 +59,11 @@ impl Context {
                 .map(|(endpoint, forward_receiver)| {
                     Box::pin(Self::forward_session(endpoint, forward_receiver))
                 });
-        let forward_sessions = select_all(forward_sessions);
+        let forward_sessions = if mesh_len != 0 {
+            select_all(forward_sessions).left_future()
+        } else {
+            pending().right_future()
+        };
         let invoke_session =
             Self::invoke_session(self.config.local_id, self.invokes, forward_senders);
         tokio::select! {
@@ -206,11 +212,6 @@ impl ContextConfig {
         mesh_degree: usize,
         mut rng: impl Rng,
     ) -> anyhow::Result<Vec<Self>> {
-        anyhow::ensure!(mesh_degree >= 3);
-        let n = nodes.len();
-        anyhow::ensure!(n > mesh_degree);
-        anyhow::ensure!(n * mesh_degree % 2 == 0);
-
         fn suitable(
             edges: &HashSet<(NodeId, NodeId)>,
             potential_edges: &HashMap<NodeId, usize>,
@@ -270,12 +271,6 @@ impl ContextConfig {
         }
 
         let keys = nodes.keys().copied().collect::<Vec<_>>();
-        let edges = loop {
-            if let Some(edges) = try_creation(&keys, mesh_degree, &mut rng) {
-                break edges;
-            }
-        };
-        // assert_eq!(edges.len(), mesh_degree * n / 2);
         let mut configs = keys
             .iter()
             .map(|&id| {
@@ -288,6 +283,21 @@ impl ContextConfig {
                 )
             })
             .collect::<HashMap<_, _>>();
+        if mesh_degree == 0 {
+            return Ok(configs.into_values().collect());
+        }
+
+        anyhow::ensure!(mesh_degree >= 3);
+        let n = nodes.len();
+        anyhow::ensure!(n > mesh_degree);
+        anyhow::ensure!(n * mesh_degree % 2 == 0);
+        let edges = loop {
+            if let Some(edges) = try_creation(&keys, mesh_degree, &mut rng) {
+                break edges;
+            }
+        };
+
+        // assert_eq!(edges.len(), mesh_degree * n / 2);
         for (id1, id2) in edges {
             configs
                 .get_mut(&id1)

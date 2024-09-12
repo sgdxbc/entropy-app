@@ -22,7 +22,7 @@ pub struct SystemSpec {
     pub group_size: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Protocol {
     Entropy,
     Glacier,
