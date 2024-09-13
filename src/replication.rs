@@ -43,6 +43,10 @@ pub struct ContextConfig {
 }
 
 impl Context {
+    pub fn new(config: ContextConfig, blocks: UnboundedReceiver<BlockMessage>) -> Self {
+        Self { config, blocks }
+    }
+
     pub async fn session(mut self) -> anyhow::Result<()> {
         let mut client_sessions = JoinSet::new();
         loop {

@@ -28,6 +28,7 @@ async fn main() -> anyhow::Result<()> {
             (
                 SocketAddr::from((ip, (node.local_index + 3000) as _)),
                 node.instance.region(),
+                node.url(),
             )
         })
         .collect::<Vec<_>>();

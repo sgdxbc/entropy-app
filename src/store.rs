@@ -7,7 +7,7 @@ use tokio::fs::{create_dir, create_dir_all, read, read_dir, remove_dir_all, writ
 use crate::block::{MerkleHash, MerkleProof, Packet};
 
 pub struct Store {
-    path: PathBuf,
+    pub path: PathBuf,
 }
 
 impl Store {

@@ -33,15 +33,15 @@ async fn main() -> anyhow::Result<()> {
     )?;
 
     let spec = serde_json::from_slice::<SystemSpec>(&read("./spec.json").await?)?;
-    let addrs =
-        serde_json::from_slice::<Vec<(SocketAddr, Option<String>)>>(&read("./addrs.json").await?)?
-            [..spec.n]
-            .to_vec();
+    let addrs = serde_json::from_slice::<Vec<(SocketAddr, Option<String>, String)>>(
+        &read("./addrs.json").await?,
+    )?[..spec.n]
+        .to_vec();
     let index = args()
         .nth(1)
         .ok_or(anyhow::format_err!("missing index argument"))?
         .parse::<usize>()?;
-    let (addr, region) = addrs[index].clone();
+    let (addr, region, url) = addrs[index].clone();
 
     let parameters = Parameters {
         chunk_size: spec.chunk_size,
@@ -49,7 +49,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let mut rng = StdRng::seed_from_u64(117418);
-    let (nodes, node_keys) = generate_nodes(addrs.iter().map(|(addr, _)| addr).copied(), &mut rng);
+    let (nodes, node_keys) =
+        generate_nodes(addrs.iter().map(|(addr, _, _)| addr).copied(), &mut rng);
     let network = broadcast::ContextConfig::generate_network(&nodes, spec.degree, &mut rng)?
         .into_iter()
         .map(|config| (config.local_id, config.mesh))
@@ -62,6 +63,23 @@ async fn main() -> anyhow::Result<()> {
     .into_iter()
     .map(|config| (config.local_id, config.mesh))
     .collect::<HashMap<_, _>>();
+    let mut region_addrs = HashMap::<_, Vec<_>>::new();
+    for (_, region, url) in addrs {
+        region_addrs.entry(region).or_default().push(url)
+    }
+    let mut regional_primaries = region_addrs
+        .values_mut()
+        .map(|addrs| addrs.remove(0))
+        .collect::<Vec<_>>();
+    let regional_mesh = if let Some(pos) = regional_primaries
+        .iter()
+        .position(|other_url| *other_url == url)
+    {
+        regional_primaries.remove(pos);
+        region_addrs.remove(&region).expect("has region")
+    } else {
+        Default::default()
+    };
 
     let (&node_id, _) = nodes
         .iter()
@@ -77,12 +95,20 @@ async fn main() -> anyhow::Result<()> {
         f: spec.f,
         ring_mesh: ring[&node_id].clone(),
         group_size: spec.group_size,
+        regional_primaries,
+        regional_mesh,
     };
     let store_dir = temp_dir().join("entropy").join(format!("{node_id:?}"));
     create_dir_all(&store_dir).await?;
     let store = Store::new(store_dir);
-    let (router, app_context, broadcast_context, glacier_context, ring_context) =
-        build(config, store);
+    let (
+        router,
+        app_context,
+        broadcast_context,
+        glacier_context,
+        ring_context,
+        replication_context,
+    ) = build(config, store);
     let router = router.route("/ok", get(|| async {}));
 
     let mut addr = nodes[&node_id].addr;
@@ -99,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
         result = broadcast_context.session() => result?,
         result = glacier_context.session() => result?,
         result = ring_context.session() => result?,
+        result = replication_context.session() => result?,
     }
     anyhow::bail!("unreachable")
 }

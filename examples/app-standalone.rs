@@ -41,11 +41,13 @@ async fn main() -> anyhow::Result<()> {
 
             ring_mesh: Default::default(),
             group_size: 0,
+            regional_primaries: Default::default(),
+            regional_mesh: Default::default(),
         };
         let store_dir = temp_dir().join("entropy").join(format!("{node_id:?}"));
         create_dir_all(&store_dir).await?;
         let store = Store::new(store_dir);
-        let (router, app_context, broadcast_context, _, _) = build(config, store);
+        let (router, app_context, broadcast_context, _, _, _) = build(config, store);
 
         let listener = TcpListener::bind(nodes[&node_id].addr).await?;
         sessions.spawn(async move {

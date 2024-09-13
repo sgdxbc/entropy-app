@@ -2,8 +2,11 @@ use std::sync::Arc;
 
 use axum::Router;
 use ed25519_dalek::SigningKey;
+use tokio::sync::mpsc::unbounded_channel;
 
-use crate::{app, block::Parameters, broadcast, glacier, store::Store, NodeBook, NodeId};
+use crate::{
+    app, block::Parameters, broadcast, glacier, replication, store::Store, NodeBook, NodeId,
+};
 
 #[derive(Debug)]
 pub struct Config {
@@ -18,6 +21,9 @@ pub struct Config {
     // glacier
     pub ring_mesh: Vec<String>,
     pub group_size: usize,
+    // replication
+    pub regional_primaries: Vec<String>,
+    pub regional_mesh: Vec<String>,
 }
 
 pub fn build(
@@ -29,6 +35,7 @@ pub fn build(
     broadcast::Context,
     glacier::Context,
     glacier::ring::Context,
+    replication::Context,
 ) {
     let store = Arc::new(store);
 
@@ -72,22 +79,41 @@ pub fn build(
     let glacier_router = glacier::make_service(glacier_service_config, ring_api.invoke_sender);
 
     let glacier_config = glacier::ContextConfig {
-        nodes: config.nodes,
+        nodes: config.nodes.clone(),
         local_id: config.local_id,
         parameters: config.parameters,
     };
-    let glacier_context = glacier::Context::new(glacier_config, store, ring_api.upcall);
+    let glacier_context = glacier::Context::new(glacier_config, store.clone(), ring_api.upcall);
+
+    let (block_sender, block_receiver) = unbounded_channel();
+    let replication_service_config = replication::ServiceConfig {
+        local_id: config.local_id,
+        f: config.f,
+        parameters: config.parameters,
+        // very not good practice
+        store_path: store.path.to_owned(),
+        nodes: config.nodes.clone(),
+    };
+    let replication_router = replication::make_service(replication_service_config, block_sender);
+
+    let replication_config = replication::ContextConfig {
+        regional_primaries: config.regional_primaries,
+        regional_mesh: config.regional_mesh,
+    };
+    let replication_context = replication::Context::new(replication_config, block_receiver);
 
     let router = Router::new()
         .nest("/entropy", app_router)
         .nest("/broadcast", broadcast_router)
         .nest("/glacier", glacier_router)
-        .nest("/ring", ring_router);
+        .nest("/ring", ring_router)
+        .nest("/replication", replication_router);
     (
         router,
         app_context,
         broadcast_context,
         glacier_context,
         ring_context,
+        replication_context,
     )
 }
