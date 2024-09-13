@@ -158,7 +158,7 @@ fn ok_session(nodes: &[Node]) -> impl Future<Output = anyhow::Result<()>> + Send
 }
 
 async fn latency_session(protocol: Protocol, nodes: &[Node]) -> anyhow::Result<Vec<String>> {
-    let name = match protocol {
+    let namespace = match protocol {
         Protocol::Entropy => "entropy",
         Protocol::Glacier => "glacier",
         Protocol::Replication => "replication",
@@ -168,7 +168,7 @@ async fn latency_session(protocol: Protocol, nodes: &[Node]) -> anyhow::Result<V
         .ok_or(anyhow::format_err!("empty nodes"))?;
     println!("put @ {}", put_node.url());
     let (block_id, checksum, verifying_key) = CLIENT
-        .post(format!("{}/{name}/put", put_node.url()))
+        .post(format!("{}/{namespace}/put", put_node.url()))
         .send()
         .await?
         .error_for_status()?
@@ -178,7 +178,7 @@ async fn latency_session(protocol: Protocol, nodes: &[Node]) -> anyhow::Result<V
     let put_latency = loop {
         sleep(Duration::from_secs(1)).await;
         if let Some(latency) = CLIENT
-            .get(format!("{}/{name}/put/{block_id}", put_node.url()))
+            .get(format!("{}/{namespace}/put/{block_id}", put_node.url()))
             .send()
             .await?
             .error_for_status()?
@@ -196,7 +196,7 @@ async fn latency_session(protocol: Protocol, nodes: &[Node]) -> anyhow::Result<V
         .ok_or(anyhow::format_err!("empty nodes"))?;
     println!("get @ {} {block_id}", get_node.url());
     CLIENT
-        .post(format!("{}/{name}/get", get_node.url()))
+        .post(format!("{}/{namespace}/get", get_node.url()))
         .json(&(block_id.clone(), verifying_key))
         .send()
         .await?
@@ -204,7 +204,7 @@ async fn latency_session(protocol: Protocol, nodes: &[Node]) -> anyhow::Result<V
     let get_latency = loop {
         sleep(Duration::from_secs(1)).await;
         if let Some((latency, other_checksum)) = CLIENT
-            .get(format!("{}/{name}/get/{block_id}", get_node.url()))
+            .get(format!("{}/{namespace}/get/{block_id}", get_node.url()))
             .send()
             .await?
             .error_for_status()?

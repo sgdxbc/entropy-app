@@ -303,12 +303,12 @@ impl ContextConfig {
                 .get_mut(&id1)
                 .unwrap()
                 .mesh
-                .push(nodes[&id2].endpoint());
+                .push(nodes[&id2].url());
             configs
                 .get_mut(&id2)
                 .unwrap()
                 .mesh
-                .push(nodes[&id1].endpoint());
+                .push(nodes[&id1].url());
         }
         Ok(configs.into_values().collect())
     }

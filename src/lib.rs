@@ -3,6 +3,7 @@ pub mod block;
 pub mod broadcast; // should be pub/sub but no plan to implement topic
 pub mod glacier;
 pub mod node;
+pub mod replication;
 pub mod store;
 
 pub fn generate_signing_key(rng: impl rand::Rng + rand::CryptoRng) -> ed25519_dalek::SigningKey {
@@ -72,7 +73,7 @@ pub fn generate_nodes(
 }
 
 impl Node {
-    pub fn endpoint(&self) -> String {
+    pub fn url(&self) -> String {
         format!("http://{}", self.addr)
     }
 }

@@ -107,7 +107,7 @@ impl Context {
                         let response = CLIENT
                             .post(format!(
                                 "{}/entropy/encode/{:?}/{:?}",
-                                nodes[&message.node_id].endpoint(),
+                                nodes[&message.node_id].url(),
                                 message.block_id,
                                 local_id,
                             ))
@@ -137,7 +137,7 @@ impl Context {
                     let response = CLIENT
                         .post(format!(
                             "{}/entropy/persist/{:?}/{:?}",
-                            nodes[&message.node_id].endpoint(),
+                            nodes[&message.node_id].url(),
                             message.block_id,
                             local_id
                         ))
@@ -173,7 +173,7 @@ impl Context {
                         let response = CLIENT
                             .post(format!(
                                 "{}/entropy/upload/{:?}/{index}",
-                                nodes[&message.node_id].endpoint(),
+                                nodes[&message.node_id].url(),
                                 message.block_id
                             ))
                             .body(packet.to_bytes())

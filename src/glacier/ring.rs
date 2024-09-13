@@ -1,7 +1,7 @@
 use std::{collections::HashMap, future::pending, iter::repeat_with, ops::Bound, sync::Arc};
 
 use axum::{
-    extract::{Path, State},
+    extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
@@ -122,9 +122,8 @@ impl Context {
             // println!("forward to {endpoint}");
             if let Err(err) = async {
                 CLIENT
-                    // not a good practice to encode arbitrary parameters (instead of index-like
-                    // ones) into path
-                    .post(format!("{endpoint}/ring/{ttl}"))
+                    .post(format!("{endpoint}/ring"))
+                    .query(&["ttl", &ttl.to_string()])
                     .body(buf.clone())
                     .send()
                     .await?
@@ -161,7 +160,7 @@ impl Context {
                 .ok_or(anyhow::format_err!("empty nodes"))?;
             // eprintln!("send to ring @ {}", node.endpoint());
             CLIENT
-                .post(format!("{}/ring/{ttl}", node.endpoint()))
+                .post(format!("{}/ring/{ttl}", node.url()))
                 .body(buf)
                 .send()
                 .await?
@@ -176,12 +175,17 @@ struct ServerState {
     message_sender: UnboundedSender<BytesTtl>,
 }
 
+#[derive(Deserialize)]
+struct QueryData {
+    ttl: u32,
+}
+
 async fn handle(
     State(state): State<ServerState>,
-    Path(ttl): Path<u32>,
+    query: Query<QueryData>,
     body: axum::body::Bytes,
 ) -> Response {
-    let Ok(()) = state.message_sender.send((body, ttl)) else {
+    let Ok(()) = state.message_sender.send((body, query.ttl)) else {
         return StatusCode::IM_A_TEAPOT.into_response();
     };
     StatusCode::OK.into_response()
@@ -197,7 +201,7 @@ pub fn make_service(config: ContextConfig) -> (Router, Context, Api) {
     let (invoke_sender, invoke_receiver) = unbounded_channel();
     let (upcall_sender, upcall_receiver) = unbounded_channel();
     let router = Router::new()
-        .route("/:ttl", post(handle))
+        .route("/", post(handle))
         .with_state(ServerState { message_sender });
     let context = Context {
         config,
@@ -225,7 +229,7 @@ impl ContextConfig {
                     .range((Bound::Excluded(id), Bound::Unbounded))
                     .chain(nodes.iter())
                     .take(mesh_degree)
-                    .map(|(_, node)| node.endpoint())
+                    .map(|(_, node)| node.url())
                     .collect();
                 (
                     id,
