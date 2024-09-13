@@ -12,10 +12,11 @@ use std::{
 
 use control::{join_all, reload, terraform_output, Node};
 use control_spec::{
-    Protocol::{self, Entropy, Glacier},
+    Protocol::{self, Entropy, Glacier, Replication},
     SystemSpec,
 };
 use rand::{seq::SliceRandom, thread_rng};
+use reqwest::StatusCode;
 use tokio::{
     fs::write,
     task::JoinSet,
@@ -48,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
             f,
             protocol: Glacier,
             chunk_size: 32 << 20,
+            // chunk_size: 1 << 10,
             k: (group_size - 2 * f).min(32),
             num_block_packet: 0,
             degree: 0,
@@ -59,8 +61,9 @@ async fn main() -> anyhow::Result<()> {
         SystemSpec {
             n: 3 * f + 1,
             f,
-            protocol: Protocol::Replication,
-            chunk_size: 1 << 30,
+            protocol: Replication,
+            // chunk_size: 1 << 30,
+            chunk_size: 64 << 20,
             k: 1,
             num_block_packet: 0,
             degree: 0,
@@ -69,7 +72,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // let spec = entropy(333);
-    let spec = glacier(1000, 33);
+    // let spec = glacier(1000, 33);
+    let spec = replication(333);
     let deploy = false;
 
     if deploy {
@@ -94,7 +98,7 @@ async fn main() -> anyhow::Result<()> {
         sleep(Duration::from_secs(1)).await;
         let mut ok_session = pin!(ok_session(&nodes));
 
-        for _ in 0..10 {
+        for _ in 0..if deploy { 10 } else { 3 } {
             let result = 'session: {
                 tokio::select! {
                     result = &mut ok_session => result?,
@@ -204,12 +208,20 @@ async fn latency_session(protocol: Protocol, nodes: &[Node]) -> anyhow::Result<V
         .choose(&mut thread_rng())
         .ok_or(anyhow::format_err!("empty nodes"))?;
     println!("get @ {} {block_id}", get_node.url());
-    CLIENT
-        .post(format!("{}/{namespace}/get", get_node.url()))
-        .json(&(block_id.clone(), verifying_key))
-        .send()
-        .await?
-        .error_for_status()?;
+    loop {
+        let response = CLIENT
+            .post(format!("{}/{namespace}/get", get_node.url()))
+            .json(&(block_id.clone(), verifying_key))
+            .send()
+            .await?;
+        if response.status() == StatusCode::NOT_FOUND {
+            println!("wait for dissemination");
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        }
+        response.error_for_status()?;
+        break;
+    }
     let get_latency = loop {
         sleep(Duration::from_secs(1)).await;
         if let Some((latency, other_checksum)) = CLIENT

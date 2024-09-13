@@ -8,6 +8,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Building artifact");
     let status = Command::new("cargo")
         .args(["build", "--release", "--bin", "entropy-app"])
+        // .args(["build", "--bin", "entropy-app"])
         .status()
         .await?;
     anyhow::ensure!(status.success(), "Command `cargo build` exit with {status}");
@@ -18,6 +19,7 @@ async fn main() -> anyhow::Result<()> {
         sessions.spawn(rsync(
             instance.public_dns.clone(),
             Path::new("target/release/entropy-app"),
+            // Path::new("target/debug/entropy-app"),
         ));
     }
     let mut the_result = Ok(());

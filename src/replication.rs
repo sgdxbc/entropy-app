@@ -62,13 +62,17 @@ impl Context {
             if push_remote {
                 for url in &self.config.regional_primaries {
                     let url = url.clone();
-                    client_sessions.spawn(
+                    let block = block.clone();
+                    client_sessions.spawn(async move {
                         CLIENT
                             .post(format!("{url}/replication/remote/{block_id:?}"))
-                            .query(&["node", &format!("{node_id:?}")])
-                            .body(block.clone())
-                            .send(),
-                    );
+                            .query(&[("node_id", format!("{node_id:?}"))])
+                            .body(block)
+                            .send()
+                            .await?
+                            .error_for_status()?;
+                        anyhow::Ok(())
+                    });
                 }
             } else {
                 // TODO corner case: only one instance in region
@@ -76,13 +80,17 @@ impl Context {
             }
             for url in &self.config.regional_mesh {
                 let url = url.clone();
-                client_sessions.spawn(
+                let block = block.clone();
+                client_sessions.spawn(async move {
                     CLIENT
                         .post(format!("{url}/replication/local/{block_id:?}"))
-                        .query(&["node_id", &format!("{node_id:?}")])
-                        .body(block.clone())
-                        .send(),
-                );
+                        .query(&[("node_id", format!("{node_id:?}"))])
+                        .body(block)
+                        .send()
+                        .await?
+                        .error_for_status()?;
+                    anyhow::Ok(())
+                });
             }
         }
         Ok(())

@@ -123,7 +123,7 @@ impl Context {
             if let Err(err) = async {
                 CLIENT
                     .post(format!("{endpoint}/ring"))
-                    .query(&["ttl", &ttl.to_string()])
+                    .query(&[("ttl", ttl)])
                     .body(buf.clone())
                     .send()
                     .await?
@@ -160,7 +160,8 @@ impl Context {
                 .ok_or(anyhow::format_err!("empty nodes"))?;
             // eprintln!("send to ring @ {}", node.endpoint());
             CLIENT
-                .post(format!("{}/ring/{ttl}", node.url()))
+                .post(format!("{}/ring", node.url()))
+                .query(&[("ttl", ttl)])
                 .body(buf)
                 .send()
                 .await?

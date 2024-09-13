@@ -120,6 +120,7 @@ pub async fn reload(spec: &SystemSpec) -> anyhow::Result<()> {
     for (index, node) in output.nodes().take(spec.n).enumerate() {
         let command = format!(
             "tmux new -d -s entropy-{index} \"./entropy-app {index} 2>./entropy-{}.log\"",
+            // "tmux new -d -s entropy-{index} \"RUST_BACKTRACE=1 ./entropy-app {index} 2>./entropy-{}.log\"",
             node.local_index,
         );
         instance_commands
