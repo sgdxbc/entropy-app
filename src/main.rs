@@ -34,12 +34,14 @@ async fn main() -> anyhow::Result<()> {
 
     let spec = serde_json::from_slice::<SystemSpec>(&read("./spec.json").await?)?;
     let addrs =
-        serde_json::from_slice::<Vec<SocketAddr>>(&read("./addrs.json").await?)?[..spec.n].to_vec();
+        serde_json::from_slice::<Vec<(SocketAddr, Option<String>)>>(&read("./addrs.json").await?)?
+            [..spec.n]
+            .to_vec();
     let index = args()
         .nth(1)
         .ok_or(anyhow::format_err!("missing index argument"))?
         .parse::<usize>()?;
-    let addr = addrs[index];
+    let (addr, region) = addrs[index].clone();
 
     let parameters = Parameters {
         chunk_size: spec.chunk_size,
@@ -47,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let mut rng = StdRng::seed_from_u64(117418);
-    let (nodes, node_keys) = generate_nodes(addrs, &mut rng);
+    let (nodes, node_keys) = generate_nodes(addrs.iter().map(|(addr, _)| addr).copied(), &mut rng);
     let network = broadcast::ContextConfig::generate_network(&nodes, spec.degree, &mut rng)?
         .into_iter()
         .map(|config| (config.local_id, config.mesh))

@@ -15,9 +15,7 @@ async fn main() -> anyhow::Result<()> {
     // let n = 12;
     let n = 100;
     let mut rng = thread_rng();
-    let addrs = (1..=n)
-        .map(|i| SocketAddr::from(([127, 0, 0, i], 3000)))
-        .collect();
+    let addrs = (1..=n).map(|i| SocketAddr::from(([127, 0, 0, i], 3000)));
     let (peers, _keys) = generate_nodes(addrs, &mut rng);
     let broadcast_configs = broadcast::ContextConfig::generate_network(&peers, 6, &mut rng)?;
 

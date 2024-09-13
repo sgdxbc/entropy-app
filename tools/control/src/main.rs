@@ -55,6 +55,19 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    fn replication(f: usize) -> SystemSpec {
+        SystemSpec {
+            n: 3 * f + 1,
+            f,
+            protocol: Protocol::Replication,
+            chunk_size: 1 << 30,
+            k: 1,
+            num_block_packet: 0,
+            degree: 0,
+            group_size: 0,
+        }
+    }
+
     // let spec = entropy(333);
     let spec = glacier(1000, 33);
     let deploy = false;
@@ -158,11 +171,7 @@ fn ok_session(nodes: &[Node]) -> impl Future<Output = anyhow::Result<()>> + Send
 }
 
 async fn latency_session(protocol: Protocol, nodes: &[Node]) -> anyhow::Result<Vec<String>> {
-    let namespace = match protocol {
-        Protocol::Entropy => "entropy",
-        Protocol::Glacier => "glacier",
-        Protocol::Replication => "replication",
-    };
+    let namespace = protocol.namespace();
     let put_node = nodes
         .choose(&mut thread_rng())
         .ok_or(anyhow::format_err!("empty nodes"))?;

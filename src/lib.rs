@@ -50,7 +50,7 @@ pub struct Node {
 pub type NodeBook = std::collections::BTreeMap<NodeId, Node>;
 
 pub fn generate_nodes(
-    addrs: Vec<std::net::SocketAddr>,
+    addrs: impl IntoIterator<Item = std::net::SocketAddr>,
     mut rng: impl rand::Rng + rand::CryptoRng,
 ) -> (
     NodeBook,

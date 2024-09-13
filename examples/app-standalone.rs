@@ -20,9 +20,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let mut rng = thread_rng();
-    let addrs = (1..=3 * f + 1)
-        .map(|i| SocketAddr::from(([127, 0, 0, i as _], 3000)))
-        .collect();
+    let addrs = (1..=3 * f + 1).map(|i| SocketAddr::from(([127, 0, 0, i as _], 3000)));
     let (nodes, node_keys) = generate_nodes(addrs, &mut rng);
     let nodes = Arc::new(nodes);
     let network = broadcast::ContextConfig::generate_network(&nodes, 6, &mut rng)?

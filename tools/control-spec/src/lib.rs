@@ -53,3 +53,13 @@ impl SystemSpec {
         )
     }
 }
+
+impl Protocol {
+    pub fn namespace(&self) -> &'static str {
+        match self {
+            Protocol::Entropy => "entropy",
+            Protocol::Glacier => "glacier",
+            Protocol::Replication => "replication",
+        }
+    }
+}

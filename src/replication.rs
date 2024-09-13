@@ -1,38 +1,105 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::BuildHasher as _,
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::Instant,
 };
 
 use axum::{
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse as _, Response},
     routing::{get, post},
     Json, Router,
 };
+use bytes::Bytes;
 use ed25519_dalek::PUBLIC_KEY_LENGTH;
 use primitive_types::H256;
 use rand::{thread_rng, RngCore as _};
 use rustc_hash::FxBuildHasher;
+use serde::Deserialize;
+use tokio::{
+    fs::{read, write},
+    sync::mpsc::{UnboundedReceiver, UnboundedSender},
+    task::JoinSet,
+};
 
 use crate::{
     block::{MerkleHash, Parameters},
-    sha256, NodeId,
+    sha256, NodeBook, NodeId, CLIENT,
 };
+
+type BlockMessage = (NodeId, H256, Bytes, bool);
+
+pub struct Context {
+    config: ContextConfig,
+    blocks: UnboundedReceiver<BlockMessage>,
+}
+
+pub struct ContextConfig {
+    pub regional_primaries: Vec<String>,
+    pub regional_mesh: Vec<String>,
+}
+
+impl Context {
+    pub async fn session(mut self) -> anyhow::Result<()> {
+        let mut client_sessions = JoinSet::new();
+        loop {
+            let Some((node_id, block_id, block, push_remote)) = (tokio::select! {
+                recv = self.blocks.recv() => recv,
+                Some(result) = client_sessions.join_next() => {
+                    result??;
+                    continue;
+                }
+            }) else {
+                break;
+            };
+            if push_remote {
+                for url in &self.config.regional_primaries {
+                    let url = url.clone();
+                    client_sessions.spawn(
+                        CLIENT
+                            .post(format!("{url}/replication/remote/{block_id:?}"))
+                            .query(&["node", &format!("{node_id:?}")])
+                            .body(block.clone())
+                            .send(),
+                    );
+                }
+            } else {
+                // TODO corner case: only one instance in region
+                anyhow::ensure!(!self.config.regional_mesh.is_empty());
+            }
+            for url in &self.config.regional_mesh {
+                let url = url.clone();
+                client_sessions.spawn(
+                    CLIENT
+                        .post(format!("{url}/replication/local/{block_id:?}"))
+                        .query(&["node_id", &format!("{node_id:?}")])
+                        .body(block.clone())
+                        .send(),
+                );
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone)]
 pub struct ServerState {
+    config: Arc<ServiceConfig>,
     put: Arc<Mutex<HashMap<H256, PutState>>>,
     get: Arc<Mutex<HashMap<H256, GetState>>>,
-    config: Arc<ServiceConfig>,
+    storing_id: Arc<Mutex<H256>>,
+    block_sender: UnboundedSender<BlockMessage>,
 }
 
 pub struct ServiceConfig {
     pub local_id: NodeId,
     pub f: usize,
     pub parameters: Parameters,
+    pub store_path: PathBuf,
+    pub nodes: Arc<NodeBook>,
 }
 
 struct PutState {
@@ -48,6 +115,9 @@ struct GetState {
 }
 
 async fn benchmark_put(State(state): State<ServerState>) -> Response {
+    if state.config.parameters.k != 1 {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    }
     let mut block = vec![0; state.config.parameters.chunk_size * state.config.parameters.k];
     thread_rng().fill_bytes(&mut block);
     let checksum = FxBuildHasher.hash_one(&block);
@@ -59,9 +129,10 @@ async fn benchmark_put(State(state): State<ServerState>) -> Response {
     };
     let block_id = H256(sha256(&block));
     state.put.lock().expect("can lock").insert(block_id, put);
-
-    // TODO
-
+    state
+        .block_sender
+        .send((state.config.local_id, block_id, Bytes::from(block), true))
+        .expect("can send");
     Json((format!("{block_id:?}"), checksum, [0; PUBLIC_KEY_LENGTH])).into_response()
 }
 
@@ -75,6 +146,71 @@ async fn poll_put(State(state): State<ServerState>, Path(block_id): Path<String>
     };
     let latency = put.end.map(|end| end - put.start);
     Json(latency).into_response()
+}
+
+#[derive(Deserialize)]
+struct QueryData {
+    node_id: String,
+}
+
+async fn remote_push(
+    State(state): State<ServerState>,
+    Path(block_id): Path<String>,
+    query: Query<QueryData>,
+    body: axum::body::Bytes,
+) -> Response {
+    let Ok(block_id) = block_id.parse::<MerkleHash>() else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    let Ok(node_id) = query.node_id.parse::<NodeId>() else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    state
+        .block_sender
+        .send((node_id, block_id, body.clone(), false))
+        .expect("can send");
+    save(state, body, block_id, node_id)
+        .await
+        .expect("can save");
+    StatusCode::OK.into_response()
+}
+
+async fn local_push(
+    State(state): State<ServerState>,
+    Path(block_id): Path<String>,
+    query: Query<QueryData>,
+    body: axum::body::Bytes,
+) -> Response {
+    let Ok(block_id) = block_id.parse::<MerkleHash>() else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    let Ok(node_id) = query.node_id.parse::<NodeId>() else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    save(state, body, block_id, node_id)
+        .await
+        .expect("can save");
+    StatusCode::OK.into_response()
+}
+
+async fn save(
+    state: ServerState,
+    block: Bytes,
+    block_id: H256,
+    node_id: H256,
+) -> anyhow::Result<()> {
+    write(state.config.store_path.join("block"), &block).await?;
+    *state.storing_id.lock().expect("can lock") = block_id;
+    CLIENT
+        .post(format!(
+            "{}/replication/persist/{block_id:?}/{:?}",
+            state.config.nodes[&node_id].url(),
+            state.config.local_id
+        ))
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
 }
 
 async fn ack_persistence(
@@ -96,14 +232,6 @@ async fn ack_persistence(
         put.end.get_or_insert_with(Instant::now);
     }
 
-    // a basic garbage collection
-    // it is not very useful in write throughput evaluation since that should scale up to all puts
-    // are concurrent
-    // the concurrency = 64 case still need to be performed with at least 64GB memory
-    // if put.num_persist_packet.len() >= state.config.num_node - 1 {
-    //     state_put.remove(&block_id);
-    // }
-    // and i just realize it clears benchmark results as well
     StatusCode::OK.into_response()
 }
 
@@ -114,6 +242,22 @@ async fn benchmark_get(
     let Ok(block_id) = block_id.parse::<MerkleHash>() else {
         return StatusCode::IM_A_TEAPOT.into_response();
     };
+    if block_id != *state.storing_id.lock().expect("can lock") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let start = Instant::now();
+    let Ok(block) = read(state.config.store_path.join("block")).await else {
+        return StatusCode::IM_A_TEAPOT.into_response();
+    };
+    let checksum = FxBuildHasher.hash_one(&block);
+    state.get.lock().expect("can lock").insert(
+        block_id,
+        GetState {
+            start,
+            end: Some(Instant::now()),
+            checksum,
+        },
+    );
     StatusCode::OK.into_response()
 }
 
@@ -133,17 +277,21 @@ async fn poll_get(State(state): State<ServerState>, Path(block_id): Path<String>
     .into_response()
 }
 
-pub fn make_service(config: ServiceConfig) -> Router {
+pub fn make_service(config: ServiceConfig, block_sender: UnboundedSender<BlockMessage>) -> Router {
     Router::new()
         .route("/put", post(benchmark_put))
         .route("/put/:block_id", get(poll_put))
+        .route("/remote/:block_id", post(remote_push))
+        .route("/local/:block_id", post(local_push))
         .route("/persist/:block_id/:node_id", post(ack_persistence))
         .route("/get", post(benchmark_get))
         .route("/get/:block_id", get(poll_get))
-        .layer(DefaultBodyLimit::max(64 << 20))
+        .layer(DefaultBodyLimit::max(2 << 30))
         .with_state(ServerState {
             config: config.into(),
             put: Default::default(),
             get: Default::default(),
+            storing_id: Default::default(),
+            block_sender,
         })
 }

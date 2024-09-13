@@ -25,7 +25,10 @@ async fn main() -> anyhow::Result<()> {
                 Mode::Public => node.instance.public_ip,
                 Mode::Private => node.instance.private_ip,
             };
-            SocketAddr::from((ip, (node.local_index + 3000) as _))
+            (
+                SocketAddr::from((ip, (node.local_index + 3000) as _)),
+                node.instance.region(),
+            )
         })
         .collect::<Vec<_>>();
 
