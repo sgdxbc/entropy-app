@@ -35,7 +35,11 @@ impl SystemSpec {
     }
 
     pub fn num_correct_packet(&self) -> usize {
-        (self.n - 2 * self.f) * self.num_block_packet
+        match self.protocol {
+            Protocol::Entropy => (self.n - 2 * self.f) * self.num_block_packet,
+            Protocol::Glacier => self.group_size - 2 * self.f,
+            Protocol::Replication => self.n - self.f,
+        }
     }
 
     pub fn csv_row(&self) -> String {

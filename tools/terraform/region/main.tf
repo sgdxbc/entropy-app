@@ -31,8 +31,8 @@ module "_1" {
   network = module.network
   state   = var.state
   type    = "r6i.4xlarge"
-  # n       = var.mode == "tput" ? 100 : 20
-  n = 2
+  n       = var.mode == "tput" ? 100 : 20
+  # n = 10
 }
 
 output "instances" {

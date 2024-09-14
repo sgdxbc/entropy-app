@@ -62,8 +62,8 @@ async fn main() -> anyhow::Result<()> {
             n: 3 * f + 1,
             f,
             protocol: Replication,
-            // chunk_size: 1 << 30,
-            chunk_size: 64 << 20,
+            chunk_size: 1 << 30,
+            // chunk_size: 256 << 20,
             k: 1,
             num_block_packet: 0,
             degree: 0,
@@ -71,15 +71,34 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // let spec = entropy(333);
-    // let spec = glacier(1000, 33);
-    let spec = replication(333);
-    let deploy = false;
+    // let spec = entropy(3333);
+    // let spec = glacier(10000, 33);
+    // let spec = replication(33);
+    // let deploy = false;
+    let deploy = true;
 
+    let command = args().nth(1);
+    if command.as_deref() == Some("latency") {
+        session(entropy(3333), &command, deploy).await?;
+        session(glacier(10000, 33), &command, deploy).await?;
+        session(replication(33), &command, deploy).await?
+    }
+
+    Ok(())
+}
+
+async fn session(spec: SystemSpec, command: &Option<String>, deploy: bool) -> anyhow::Result<()> {
     if deploy {
         anyhow::ensure!(spec.num_correct_packet() >= spec.k);
     }
-    if spec.block_size() != 1 << 30 || spec.n != 10000 {
+    if spec.block_size() != 1 << 30
+        || spec.n
+            != if matches!(spec.protocol, Replication) {
+                100
+            } else {
+                10000
+            }
+    {
         if deploy {
             anyhow::bail!("incorrect spec")
         } else {
@@ -91,36 +110,28 @@ async fn main() -> anyhow::Result<()> {
     anyhow::ensure!(output.instances().count() * 100 >= spec.n);
     let nodes = output.nodes().take(spec.n).collect::<Vec<_>>();
 
+    reload(&spec).await?;
+    sleep(Duration::from_secs(1)).await;
+    let mut ok_session = pin!(ok_session(&nodes));
+
     let mut lines = String::new();
-    let command = args().nth(1);
     if command.as_deref() == Some("latency") {
-        reload(&spec).await?;
-        sleep(Duration::from_secs(1)).await;
-        let mut ok_session = pin!(ok_session(&nodes));
-
-        for _ in 0..if deploy { 10 } else { 3 } {
-            let result = 'session: {
-                tokio::select! {
-                    result = &mut ok_session => result?,
-                    result = latency_session(spec.protocol, &nodes) => break 'session result?,
-                }
-                anyhow::bail!("unreachable")
-            };
-            for line in result {
-                writeln!(&mut lines, "{},{line}", spec.csv_row())?
+        lines = 'session: {
+            tokio::select! {
+                result = &mut ok_session => result?,
+                result = latency_loop_session(&spec, &nodes, deploy) => break 'session result?,
             }
-        }
+            anyhow::bail!("unreachable")
+        };
     } else if command.as_deref() == Some("tput") {
-        reload(&spec).await?;
-        sleep(Duration::from_secs(1)).await;
-        let mut ok_session = pin!(ok_session(&nodes));
-
-        tokio::select! {
-            result = &mut ok_session => result?,
-            result = tput_session(nodes, 8, 4) => result.map(|_| ())?,
-        }
-    } else {
-        reload(&spec).await?;
+        let result = 'session: {
+            tokio::select! {
+                result = &mut ok_session => result?,
+                result = tput_session(spec.protocol, nodes, 8, 4) => break 'session result?,
+            }
+            anyhow::bail!("unreachable")
+        };
+        writeln!(&mut lines, "{},{result}", spec.csv_row())?
     }
 
     if deploy {
@@ -132,7 +143,6 @@ async fn main() -> anyhow::Result<()> {
             .await?
         }
     }
-
     Ok(())
 }
 
@@ -149,7 +159,7 @@ fn ok_session(nodes: &[Node]) -> impl Future<Output = anyhow::Result<()>> + Send
                 if let Err(err) = async {
                     CLIENT
                         .get(format!("{url}/ok"))
-                        .timeout(Duration::from_millis(2000))
+                        .timeout(Duration::from_millis(3000)) // why so much latency...
                         .send()
                         .await?
                         .error_for_status()?;
@@ -158,7 +168,9 @@ fn ok_session(nodes: &[Node]) -> impl Future<Output = anyhow::Result<()>> + Send
                 .await
                 {
                     strike += 1;
-                    println!("[{strike}/3] not ok {err}");
+                    if strike > 1 {
+                        println!("[{strike}/3] not ok {err}")
+                    }
                     if strike == 3 {
                         return Err(err);
                     }
@@ -174,7 +186,29 @@ fn ok_session(nodes: &[Node]) -> impl Future<Output = anyhow::Result<()>> + Send
     }
 }
 
-async fn latency_session(protocol: Protocol, nodes: &[Node]) -> anyhow::Result<Vec<String>> {
+async fn latency_loop_session(
+    spec: &SystemSpec,
+    nodes: &[Node],
+    deploy: bool,
+) -> anyhow::Result<String> {
+    let mut lines = String::new();
+    for i in 0..if deploy { 10 } else { 3 } {
+        let result = latency_session(spec.protocol, nodes, deploy).await?;
+        if i == 0 {
+            continue;
+        }
+        for line in result {
+            writeln!(&mut lines, "{},{line}", spec.csv_row())?
+        }
+    }
+    Ok(lines)
+}
+
+async fn latency_session(
+    protocol: Protocol,
+    nodes: &[Node],
+    deploy: bool,
+) -> anyhow::Result<Vec<String>> {
     let namespace = protocol.namespace();
     let put_node = nodes
         .choose(&mut thread_rng())
@@ -202,7 +236,7 @@ async fn latency_session(protocol: Protocol, nodes: &[Node]) -> anyhow::Result<V
             break latency;
         }
     };
-    sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(if deploy { 10 } else { 1 })).await;
 
     let get_node = nodes
         .choose(&mut thread_rng())
@@ -246,6 +280,7 @@ async fn latency_session(protocol: Protocol, nodes: &[Node]) -> anyhow::Result<V
 }
 
 async fn tput_session(
+    protocol: Protocol,
     nodes: Vec<Node>,
     count: usize,
     concurrency: usize,
@@ -266,7 +301,7 @@ async fn tput_session(
                 let put_url = nodes[i % nodes.len()].url();
                 println!("[{index:02}] put {put_url}");
                 let (block_id, _checksum, _verifying_key) = CLIENT
-                    .post(format!("{}/entropy/put", put_url))
+                    .post(format!("{}/{}/put", put_url, protocol.namespace()))
                     .send()
                     .await?
                     .error_for_status()?
@@ -274,7 +309,11 @@ async fn tput_session(
                     .await?;
                 loop {
                     if let Some(latency) = CLIENT
-                        .get(format!("{}/entropy/put/{block_id}", put_url))
+                        .get(format!(
+                            "{}/{}/put/{block_id}",
+                            put_url,
+                            protocol.namespace()
+                        ))
                         .send()
                         .await?
                         .error_for_status()?

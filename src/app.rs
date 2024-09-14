@@ -179,15 +179,19 @@ impl Context {
                             .body(packet.to_bytes())
                             .send()
                             .await;
-                        // let response = match response {
-                        //     Ok(response) => response,
-                        //     Err(err) => {
-                        //         // TODO
-                        //         eprintln!("{err}");
-                        //         break;
-                        //     }
-                        // };
-                        let response = response?;
+                        // a temporary workaround for connection reset issue in WAN deployment
+                        // may or may not relate to https://github.com/tokio-rs/axum/issues/2168
+                        // assuming it only happen after the GET has done, so bypassing it would not
+                        // cause liveness issue
+                        // let response = response?;
+                        let response = match response {
+                            Ok(response) => response,
+                            Err(err) => {
+                                // TODO
+                                eprintln!("{err}");
+                                break;
+                            }
+                        };
                         if response.status() == StatusCode::NOT_FOUND {
                             break;
                         }
