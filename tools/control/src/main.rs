@@ -74,14 +74,18 @@ async fn main() -> anyhow::Result<()> {
     // let spec = entropy(3333);
     // let spec = glacier(10000, 33);
     // let spec = replication(33);
-    // let deploy = false;
-    let deploy = true;
+    let deploy = false;
+    // let deploy = true;
 
     let command = args().nth(1);
     if command.as_deref() == Some("latency") {
         session(entropy(3333), &command, deploy).await?;
         session(glacier(10000, 33), &command, deploy).await?;
         session(replication(33), &command, deploy).await?
+    }
+    if command.as_deref() == Some("tput") {
+        session(entropy(3333), &command, deploy).await?;
+        // session(glacier(10000, 33), &command, deploy).await?;
     }
 
     Ok(())
@@ -124,14 +128,13 @@ async fn session(spec: SystemSpec, command: &Option<String>, deploy: bool) -> an
             anyhow::bail!("unreachable")
         };
     } else if command.as_deref() == Some("tput") {
-        let result = 'session: {
+        lines = 'session: {
             tokio::select! {
                 result = &mut ok_session => result?,
-                result = tput_session(spec.protocol, nodes, 8, 4) => break 'session result?,
+                result = tput_loop_session(&spec, nodes) => break 'session result?,
             }
             anyhow::bail!("unreachable")
         };
-        writeln!(&mut lines, "{},{result}", spec.csv_row())?
     }
 
     if deploy {
@@ -201,6 +204,21 @@ async fn latency_loop_session(
             writeln!(&mut lines, "{},{line}", spec.csv_row())?
         }
     }
+    Ok(lines)
+}
+
+async fn tput_loop_session(spec: &SystemSpec, nodes: Vec<Node>) -> anyhow::Result<String> {
+    let count = 64;
+    let concurrency = 64;
+
+    let mut lines = String::new();
+    let nodes = nodes.into();
+    let result = tput_session(spec.protocol, nodes, count, concurrency).await?;
+    writeln!(
+        &mut lines,
+        "{},{count},{concurrency},{result}",
+        spec.csv_row()
+    )?;
     Ok(lines)
 }
 
@@ -281,11 +299,10 @@ async fn latency_session(
 
 async fn tput_session(
     protocol: Protocol,
-    nodes: Vec<Node>,
+    nodes: Arc<[Node]>,
     count: usize,
     concurrency: usize,
 ) -> anyhow::Result<String> {
-    let nodes = Arc::<[_]>::from(nodes);
     let count = Arc::new(AtomicUsize::new(count + concurrency));
     let mut sessions = JoinSet::new();
     let start = Instant::now();
