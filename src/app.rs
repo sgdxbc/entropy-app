@@ -112,7 +112,16 @@ impl Context {
                                 local_id,
                             ))
                             .send()
-                            .await?;
+                            .await;
+                        // let response = response?;
+                        let response = match response {
+                            Ok(response) => response,
+                            Err(err) => {
+                                // TODO
+                                eprintln!("{err}");
+                                continue 'recv;
+                            }
+                        };
                         if response.status() == StatusCode::NOT_FOUND {
                             eprintln!("put service unavailable");
                             continue 'recv;

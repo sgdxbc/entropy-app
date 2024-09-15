@@ -35,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
             f,
             protocol: Entropy,
             chunk_size: 32 << 10,
+            // chunk_size: 1 << 10,
             k: ((n - 2 * f) * num_block_packet).min(32 << 10),
             num_block_packet,
             degree: 6,
@@ -76,8 +77,14 @@ async fn main() -> anyhow::Result<()> {
     // let spec = replication(33);
     let deploy = false;
     // let deploy = true;
-
     let command = args().nth(1);
+
+    if !deploy {
+        // session(entropy(3333), &command, deploy).await?;
+        session(glacier(10000, 33), &command, deploy).await?;
+        return Ok(());
+    }
+
     if command.as_deref() == Some("latency") {
         session(entropy(3333), &command, deploy).await?;
         session(glacier(10000, 33), &command, deploy).await?;
@@ -85,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
     }
     if command.as_deref() == Some("tput") {
         session(entropy(3333), &command, deploy).await?;
-        // session(glacier(10000, 33), &command, deploy).await?;
+        session(glacier(10000, 33), &command, deploy).await?
     }
 
     Ok(())
@@ -131,7 +138,7 @@ async fn session(spec: SystemSpec, command: &Option<String>, deploy: bool) -> an
         lines = 'session: {
             tokio::select! {
                 result = &mut ok_session => result?,
-                result = tput_loop_session(&spec, nodes) => break 'session result?,
+                result = tput_loop_session(&spec, nodes, deploy) => break 'session result?,
             }
             anyhow::bail!("unreachable")
         };
@@ -207,18 +214,35 @@ async fn latency_loop_session(
     Ok(lines)
 }
 
-async fn tput_loop_session(spec: &SystemSpec, nodes: Vec<Node>) -> anyhow::Result<String> {
-    let count = 64;
-    let concurrency = 64;
-
+async fn tput_loop_session(
+    spec: &SystemSpec,
+    nodes: Vec<Node>,
+    deploy: bool,
+) -> anyhow::Result<String> {
     let mut lines = String::new();
-    let nodes = nodes.into();
-    let result = tput_session(spec.protocol, nodes, count, concurrency).await?;
-    writeln!(
-        &mut lines,
-        "{},{count},{concurrency},{result}",
-        spec.csv_row()
-    )?;
+    let nodes = Arc::<[_]>::from(nodes);
+    for &(count, concurrency) in if !deploy {
+        &[(100, 100)][..]
+    } else {
+        &[
+            (1, 10),
+            (2, 20),
+            (5, 50),
+            (10, 100),
+            (20, 100),
+            (40, 100),
+            (60, 100),
+            (80, 100),
+            (100, 100),
+        ][..]
+    } {
+        let result = tput_session(spec.protocol, nodes.clone(), count, concurrency).await?;
+        writeln!(
+            &mut lines,
+            "{},{count},{concurrency},{result}",
+            spec.csv_row()
+        )?
+    }
     Ok(lines)
 }
 

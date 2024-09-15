@@ -101,27 +101,23 @@ pub async fn reload(spec: &SystemSpec) -> anyhow::Result<()> {
             instance.public_dns.clone(),
             "pkill -x entropy-app; rm -rf /tmp/entropy; rm -f entropy-*.log; true",
         ));
-        // sessions.spawn(rsync(
-        //     instance.public_dns.clone(),
-        //     Path::new("target/spec.json"),
-        // ));
-    }
-    join_all(sessions).await?;
-    println!("cleanup done");
-
-    let mut sessions = JoinSet::new();
-    for instance in output.instances() {
-        // sessions.spawn(ssh(
-        //     instance.public_dns.clone(),
-        //     "pkill -x entropy-app; rm -rf /tmp/entropy; rm -f entropy-*.log; true",
-        // ));
         sessions.spawn(rsync(
             instance.public_dns.clone(),
             Path::new("target/spec.json"),
         ));
     }
     join_all(sessions).await?;
-    println!("configure done");
+    println!("cleanup done");
+
+    // let mut sessions = JoinSet::new();
+    // for instance in output.instances() {
+    //     sessions.spawn(rsync(
+    //         instance.public_dns.clone(),
+    //         Path::new("target/spec.json"),
+    //     ));
+    // }
+    // join_all(sessions).await?;
+    // println!("configure done");
 
     sleep(Duration::from_secs(1)).await;
 
