@@ -72,11 +72,8 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // let spec = entropy(3333);
-    // let spec = glacier(10000, 33);
-    // let spec = replication(33);
-    let deploy = false;
-    // let deploy = true;
+    // let deploy = false;
+    let deploy = true;
     let command = args().nth(1);
 
     if !deploy {
@@ -91,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
         session(replication(33), &command, deploy).await?
     }
     if command.as_deref() == Some("tput") {
-        session(entropy(3333), &command, deploy).await?;
+        // session(entropy(3333), &command, deploy).await?;
         session(glacier(10000, 33), &command, deploy).await?
     }
 
@@ -121,27 +118,13 @@ async fn session(spec: SystemSpec, command: &Option<String>, deploy: bool) -> an
     anyhow::ensure!(output.instances().count() * 100 >= spec.n);
     let nodes = output.nodes().take(spec.n).collect::<Vec<_>>();
 
-    reload(&spec).await?;
-    sleep(Duration::from_secs(1)).await;
-    let mut ok_session = pin!(ok_session(&nodes));
-
     let mut lines = String::new();
     if command.as_deref() == Some("latency") {
-        lines = 'session: {
-            tokio::select! {
-                result = &mut ok_session => result?,
-                result = latency_loop_session(&spec, &nodes, deploy) => break 'session result?,
-            }
-            anyhow::bail!("unreachable")
-        };
+        lines = latency_loop_session(&spec, &nodes, deploy).await?
     } else if command.as_deref() == Some("tput") {
-        lines = 'session: {
-            tokio::select! {
-                result = &mut ok_session => result?,
-                result = tput_loop_session(&spec, nodes, deploy) => break 'session result?,
-            }
-            anyhow::bail!("unreachable")
-        };
+        lines = tput_loop_session(&spec, nodes, deploy).await?
+    } else {
+        reload(&spec).await?
     }
 
     if deploy {
@@ -201,9 +184,19 @@ async fn latency_loop_session(
     nodes: &[Node],
     deploy: bool,
 ) -> anyhow::Result<String> {
+    reload(spec).await?;
+    sleep(Duration::from_secs(1)).await;
+    let mut ok_session = pin!(ok_session(nodes));
+
     let mut lines = String::new();
     for i in 0..if deploy { 10 } else { 3 } {
-        let result = latency_session(spec.protocol, nodes, deploy).await?;
+        let result = 'session: {
+            tokio::select! {
+                result = &mut ok_session => result?,
+                result =  latency_session(spec.protocol, nodes, deploy) => break 'session result?,
+            }
+            anyhow::bail!("unreachable")
+        };
         if i == 0 {
             continue;
         }
@@ -225,18 +218,28 @@ async fn tput_loop_session(
         &[(100, 100)][..]
     } else {
         &[
-            (1, 10),
-            (2, 20),
-            (5, 50),
-            (10, 100),
-            (20, 100),
-            (40, 100),
-            (60, 100),
-            (80, 100),
+            (10, 1),
+            (20, 2),
+            (50, 5),
+            (100, 10),
+            (100, 20),
+            (100, 40),
+            (100, 60),
+            (100, 80),
             (100, 100),
         ][..]
     } {
-        let result = tput_session(spec.protocol, nodes.clone(), count, concurrency).await?;
+        reload(spec).await?;
+        sleep(Duration::from_secs(1)).await;
+        let mut ok_session = pin!(ok_session(&nodes));
+
+        let result = 'session: {
+            tokio::select! {
+                result = &mut ok_session => result?,
+                result = tput_session(spec.protocol, nodes.clone(), count, concurrency) => break 'session result?,
+            }
+            anyhow::bail!("unreachable")
+        };
         writeln!(
             &mut lines,
             "{},{count},{concurrency},{result}",
@@ -327,17 +330,17 @@ async fn tput_session(
     count: usize,
     concurrency: usize,
 ) -> anyhow::Result<String> {
-    let count = Arc::new(AtomicUsize::new(count + concurrency));
+    let seq = Arc::new(AtomicUsize::new(0));
     let mut sessions = JoinSet::new();
     let start = Instant::now();
     for index in 0..concurrency {
         let nodes = nodes.clone();
-        let count = count.clone();
+        let seq = seq.clone();
         sessions.spawn(async move {
             let mut i;
             while {
-                i = count.fetch_sub(1, SeqCst);
-                i > concurrency
+                i = seq.fetch_sub(1, SeqCst);
+                i < count
             } {
                 let put_url = nodes[i % nodes.len()].url();
                 println!("[{index:02}] put {put_url}");

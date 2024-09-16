@@ -1,6 +1,6 @@
 use std::{env::args, net::SocketAddr, path::Path};
 
-use control::{rsync, terraform_output};
+use control::{join_all, rsync, terraform_output};
 use tokio::{fs::write, task::JoinSet};
 
 #[tokio::main(flavor = "current_thread")]
@@ -40,9 +40,5 @@ async fn main() -> anyhow::Result<()> {
     for instance in output.instances() {
         sessions.spawn(rsync(instance.public_dns.clone(), addrs_path));
     }
-    let mut the_result = Ok(());
-    while let Some(result) = sessions.join_next().await {
-        the_result = the_result.and_then(|_| anyhow::Ok(result??))
-    }
-    the_result
+    join_all(sessions).await
 }
