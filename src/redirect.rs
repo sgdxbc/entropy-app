@@ -6,21 +6,14 @@ use axum::{
     Json, Router,
 };
 use bytes::Bytes;
+use control_spec::RedirectSpec;
 use ed25519_dalek::PUBLIC_KEY_LENGTH;
 use rand::{thread_rng, RngCore};
-use serde::Deserialize;
 use tokio::time::sleep;
 
 use crate::CLIENT;
 
-#[derive(Deserialize)]
-struct BenchmarkSpec {
-    put_url: String,
-    get_url: String,
-    block_size: usize,
-}
-
-async fn benchmark(Json(spec): Json<BenchmarkSpec>) -> Response {
+async fn benchmark(Json(spec): Json<RedirectSpec>) -> Response {
     let mut block = vec![0; spec.block_size];
     thread_rng().fill_bytes(&mut block);
     let block = Bytes::from(block);

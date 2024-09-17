@@ -13,9 +13,12 @@ use std::{
 use control::{join_all, reload, terraform_output, Node};
 use control_spec::{
     Protocol::{self, Entropy, Glacier, Replication},
-    SystemSpec,
+    RedirectSpec, SystemSpec,
 };
-use rand::{seq::SliceRandom, thread_rng};
+use rand::{
+    seq::{IteratorRandom, SliceRandom},
+    thread_rng,
+};
 use reqwest::StatusCode;
 use tokio::{
     fs::write,
@@ -127,7 +130,13 @@ async fn session(
 
     let mut lines = String::new();
     if command.as_deref() == Some("latency") {
-        lines = latency_loop_session(&spec, &nodes, deploy).await?
+        let mode = args().nth(2);
+        let mode = match mode.as_deref() {
+            Some("local") => LatencyMode::Local,
+            Some("remote") => LatencyMode::Remote,
+            _ => LatencyMode::Internal,
+        };
+        lines = latency_loop_session(&spec, mode, &nodes, deploy).await?
     } else if command.as_deref() == Some("tput") {
         spec.node_bandwidth = (10 << 20) / 8;
         lines = tput_loop_session(&spec, nodes, deploy).await?
@@ -187,8 +196,16 @@ fn ok_session(nodes: &[Node]) -> impl Future<Output = anyhow::Result<()>> + Send
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum LatencyMode {
+    Internal,
+    Local,
+    Remote,
+}
+
 async fn latency_loop_session(
     spec: &SystemSpec,
+    mode: LatencyMode,
     nodes: &[Node],
     deploy: bool,
 ) -> anyhow::Result<String> {
@@ -198,10 +215,18 @@ async fn latency_loop_session(
 
     let mut lines = String::new();
     for i in 0..if deploy { 10 } else { 3 } {
+        let session = async {
+            use LatencyMode::*;
+            match mode {
+                Internal => latency_session(spec.protocol, nodes, deploy).await,
+                Local => latency_redirect_session(spec, nodes, true).await,
+                Remote => latency_redirect_session(spec, nodes, false).await,
+            }
+        };
         let result = 'session: {
             tokio::select! {
                 result = &mut ok_session => result?,
-                result =  latency_session(spec.protocol, nodes, deploy) => break 'session result?,
+                result = session => break 'session result?,
             }
             anyhow::bail!("unreachable")
         };
@@ -334,6 +359,51 @@ async fn latency_session(
     Ok(vec![
         format!("put,{}", put_latency.as_micros()),
         format!("get,{}", get_latency.as_micros()),
+    ])
+}
+
+async fn latency_redirect_session(
+    spec: &SystemSpec,
+    nodes: &[Node],
+    local: bool,
+) -> anyhow::Result<Vec<String>> {
+    let client_node = nodes
+        .choose(&mut thread_rng())
+        .ok_or(anyhow::format_err!("empty nodes"))?;
+    let put_node = nodes
+        .iter()
+        .filter(|node| (node.instance.region() == client_node.instance.region()) == local)
+        .choose(&mut thread_rng())
+        .ok_or(anyhow::format_err!("empty nodes"))?;
+    let get_node = nodes
+        .iter()
+        .filter(|node| (node.instance.region() == client_node.instance.region()) == local)
+        .choose(&mut thread_rng())
+        .ok_or(anyhow::format_err!("empty nodes"))?;
+    println!(
+        "client {} {:?}",
+        client_node.url(),
+        client_node.instance.region()
+    );
+    println!("  put {} {:?}", put_node.url(), put_node.instance.region());
+    println!("  get {} {:?}", get_node.url(), get_node.instance.region());
+    let redirect_spec = RedirectSpec {
+        put_url: format!("{}/{}", put_node.url(), spec.protocol.namespace()),
+        get_url: format!("{}/{}", get_node.url(), spec.protocol.namespace()),
+        block_size: spec.block_size(),
+    };
+    let (put_latency, get_latency) = CLIENT
+        .post(format!("{}/redirect", client_node.url()))
+        .json(&redirect_spec)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<(Duration, Duration)>()
+        .await?;
+    let suffix = if local { "/local" } else { "/remote" };
+    Ok(vec![
+        format!("put{suffix},{}", put_latency.as_micros()),
+        format!("get{suffix},{}", get_latency.as_micros()),
     ])
 }
 

@@ -68,3 +68,10 @@ impl Protocol {
         }
     }
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RedirectSpec {
+    pub put_url: String,
+    pub get_url: String,
+    pub block_size: usize,
+}
