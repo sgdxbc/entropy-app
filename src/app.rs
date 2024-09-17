@@ -495,19 +495,18 @@ async fn upload(
     };
     if !packet.can_recover(&state.config.parameters) {
         get.scratch = Some(packet);
-    } else {
+    } else if !get.redirect {
         let block = packet
             .recover(&state.config.parameters)
             .expect("can recover");
+        // println!("recover done");
         let replaced = get.end.replace(Instant::now());
         assert!(replaced.is_none());
-        get.checksum = FxBuildHasher.hash_one(
-            block
-                .chunks
-                .into_iter()
-                .map(|(buf, _)| buf)
-                .collect::<Vec<_>>(),
-        )
+        get.checksum = FxBuildHasher.hash_one(block.to_bytes())
+    } else {
+        get.scratch = Some(packet);
+        let replaced = get.end.replace(Instant::now());
+        assert!(replaced.is_none());
     }
     StatusCode::OK.into_response()
 }
@@ -554,20 +553,18 @@ async fn upload_index(
     };
     if !packet.can_recover(&state.config.parameters) {
         get.scratch = Some(packet);
-    } else {
+    } else if !get.redirect {
         let block = packet
             .recover(&state.config.parameters)
             .expect("can recover");
         // println!("recover done");
         let replaced = get.end.replace(Instant::now());
         assert!(replaced.is_none());
-        get.checksum = FxBuildHasher.hash_one(
-            block
-                .chunks
-                .into_iter()
-                .map(|(buf, _)| buf)
-                .collect::<Vec<_>>(),
-        )
+        get.checksum = FxBuildHasher.hash_one(block.to_bytes())
+    } else {
+        get.scratch = Some(packet);
+        let replaced = get.end.replace(Instant::now());
+        assert!(replaced.is_none());
     }
     StatusCode::OK.into_response()
 }

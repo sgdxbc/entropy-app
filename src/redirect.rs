@@ -49,7 +49,9 @@ async fn benchmark(Json(spec): Json<RedirectSpec>) -> Response {
     .await
     .expect("can poll put")
     .is_none()
-    {}
+    {
+        sleep(Duration::from_secs(1)).await
+    }
 
     let put_latency = start.elapsed();
 

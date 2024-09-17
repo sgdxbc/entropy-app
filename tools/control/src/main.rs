@@ -84,7 +84,8 @@ async fn main() -> anyhow::Result<()> {
 
     if !deploy {
         // session(entropy(3333), &command, deploy).await?;
-        session(glacier(10000, 33), &command, deploy).await?;
+        // session(glacier(10000, 33), &command, deploy).await?;
+        session(replication(33), &command, deploy).await?;
         return Ok(());
     }
 
@@ -252,14 +253,14 @@ async fn tput_loop_session(
         // &[(10, 10)][..]
     } else {
         &[
-            // (10, 1),
-            // (20, 2),
-            // (50, 5),
-            // (100, 10),
-            // (100, 20),
-            // (100, 40),
-            // (100, 60),
-            // (100, 80),
+            (10, 1),
+            (20, 2),
+            (50, 5),
+            (100, 10),
+            (100, 20),
+            (100, 40),
+            (100, 60),
+            (100, 80),
             (120, 120),
             (140, 140),
             (160, 160),
@@ -400,6 +401,7 @@ async fn latency_redirect_session(
         .error_for_status()?
         .json::<(Duration, Duration)>()
         .await?;
+    println!("put {put_latency:?} get {get_latency:?}");
     let suffix = if local { "/local" } else { "/remote" };
     Ok(vec![
         format!("put{suffix},{}", put_latency.as_micros()),
