@@ -5,6 +5,7 @@ pub struct SystemSpec {
     // network
     pub n: usize,
     pub f: usize,
+    pub node_bandwidth: usize,
     // address list is long and fixed, send a dedicated file ahead of time for it
     // pub addrs: Vec<SocketAddr>,
     pub protocol: Protocol,

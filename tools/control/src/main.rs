@@ -33,6 +33,7 @@ async fn main() -> anyhow::Result<()> {
         SystemSpec {
             n,
             f,
+            node_bandwidth: (10 << 30) / 8,
             protocol: Entropy,
             chunk_size: 32 << 10,
             // chunk_size: 1 << 10,
@@ -48,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
         SystemSpec {
             n,
             f,
+            node_bandwidth: (10 << 30) / 8,
             protocol: Glacier,
             chunk_size: 32 << 20,
             // chunk_size: 1 << 10,
@@ -62,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
         SystemSpec {
             n: 3 * f + 1,
             f,
+            node_bandwidth: (10 << 30) / 8,
             protocol: Replication,
             chunk_size: 1 << 30,
             // chunk_size: 256 << 20,
@@ -88,14 +91,18 @@ async fn main() -> anyhow::Result<()> {
         session(replication(33), &command, deploy).await?
     }
     if command.as_deref() == Some("tput") {
-        // session(entropy(3333), &command, deploy).await?;
+        session(entropy(3333), &command, deploy).await?;
         session(glacier(10000, 33), &command, deploy).await?
     }
 
     Ok(())
 }
 
-async fn session(spec: SystemSpec, command: &Option<String>, deploy: bool) -> anyhow::Result<()> {
+async fn session(
+    mut spec: SystemSpec,
+    command: &Option<String>,
+    deploy: bool,
+) -> anyhow::Result<()> {
     if deploy {
         anyhow::ensure!(spec.num_correct_packet() >= spec.k);
     }
@@ -122,6 +129,7 @@ async fn session(spec: SystemSpec, command: &Option<String>, deploy: bool) -> an
     if command.as_deref() == Some("latency") {
         lines = latency_loop_session(&spec, &nodes, deploy).await?
     } else if command.as_deref() == Some("tput") {
+        spec.node_bandwidth = (10 << 20) / 8;
         lines = tput_loop_session(&spec, nodes, deploy).await?
     } else {
         reload(&spec).await?
@@ -216,6 +224,7 @@ async fn tput_loop_session(
     let nodes = Arc::<[_]>::from(nodes);
     for &(count, concurrency) in if !deploy {
         &[(100, 100)][..]
+        // &[(10, 10)][..]
     } else {
         &[
             (10, 1),
@@ -339,7 +348,7 @@ async fn tput_session(
         sessions.spawn(async move {
             let mut i;
             while {
-                i = seq.fetch_sub(1, SeqCst);
+                i = seq.fetch_add(1, SeqCst);
                 i < count
             } {
                 let put_url = nodes[i % nodes.len()].url();

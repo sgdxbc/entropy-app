@@ -5,7 +5,7 @@ use std::{
     hash::BuildHasher,
     iter::repeat_with,
     sync::{Arc, Mutex},
-    time::Instant,
+    time::Duration,
 };
 
 use axum::{
@@ -21,7 +21,10 @@ use ed25519_dalek::{SigningKey, VerifyingKey, PUBLIC_KEY_LENGTH};
 use rand::{thread_rng, RngCore as _};
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::{
+    sync::mpsc::{UnboundedReceiver, UnboundedSender},
+    time::{sleep_until, Instant},
+};
 
 use crate::{
     block::{distr::PacketDistr, Block, MerkleHash, Packet, Parameters},
@@ -41,6 +44,7 @@ pub struct ContextConfig {
     pub nodes: Arc<NodeBook>,
     pub parameters: Parameters,
     pub num_block_packet: usize,
+    pub node_bandwidth: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -81,6 +85,7 @@ impl Context {
             self.store,
             self.config.parameters,
             self.config.num_block_packet,
+            self.config.node_bandwidth,
             self.broadcast_messages,
         )
         .await
@@ -92,6 +97,7 @@ impl Context {
         store: Arc<Store>,
         parameters: Parameters,
         num_block_packet: usize,
+        node_bandwidth: usize,
         mut broadcast_messages: UnboundedReceiver<Bytes>,
     ) -> anyhow::Result<()> {
         'recv: while let Some(bytes) = broadcast_messages.recv().await {
@@ -104,6 +110,7 @@ impl Context {
                     // TODO deduplicate?
                     // TODO concurrent? probably not very useful when there are a lot of nodes
                     for _ in 0..num_block_packet {
+                        let start = Instant::now();
                         let response = CLIENT
                             .post(format!(
                                 "{}/entropy/encode/{:?}/{:?}",
@@ -126,10 +133,12 @@ impl Context {
                             eprintln!("put service unavailable");
                             continue 'recv;
                         }
-                        let packet = Packet::from_bytes(
-                            response.error_for_status()?.bytes().await?,
-                            &parameters,
-                        )?;
+                        let bytes = response.error_for_status()?.bytes().await?;
+                        let transmission_duration =
+                            Duration::from_secs_f64(bytes.len() as f64 / node_bandwidth as f64);
+                        sleep_until(start + transmission_duration).await;
+
+                        let packet = Packet::from_bytes(bytes, &parameters)?;
                         // if packet
                         //     .verify(&nodes[&message.node_id].verifying_key, &parameters)
                         if packet.block_id() != message.block_id

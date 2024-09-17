@@ -5,7 +5,7 @@ use tokio::task::JoinSet;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    let rate = 1.;
+    let rate = 5.;
 
     let output = terraform_output().await?;
     let mut sessions = JoinSet::new();

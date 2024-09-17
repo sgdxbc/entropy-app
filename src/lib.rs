@@ -5,6 +5,7 @@ pub mod glacier;
 pub mod node;
 pub mod replication;
 pub mod store;
+pub mod redirect;
 
 pub fn generate_signing_key(rng: impl rand::Rng + rand::CryptoRng) -> ed25519_dalek::SigningKey {
     struct W<T>(T);

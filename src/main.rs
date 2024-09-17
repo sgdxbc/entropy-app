@@ -93,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
         num_block_packet: spec.num_block_packet,
         mesh: network[&node_id].clone(),
         f: spec.f,
+        node_bandwidth: spec.node_bandwidth,
         ring_mesh: ring[&node_id].clone(),
         group_size: spec.group_size,
         regional_primaries,

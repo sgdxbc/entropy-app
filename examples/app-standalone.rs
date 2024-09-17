@@ -38,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
             num_block_packet,
             mesh: network[&node_id].clone(),
             f,
+            node_bandwidth: (10 << 30) / 8,
 
             ring_mesh: Default::default(),
             group_size: 0,

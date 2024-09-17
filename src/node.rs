@@ -5,7 +5,8 @@ use ed25519_dalek::SigningKey;
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::{
-    app, block::Parameters, broadcast, glacier, replication, store::Store, NodeBook, NodeId,
+    app, block::Parameters, broadcast, glacier, redirect, replication, store::Store, NodeBook,
+    NodeId,
 };
 
 #[derive(Debug)]
@@ -15,6 +16,7 @@ pub struct Config {
     pub parameters: Parameters,
     pub nodes: Arc<NodeBook>,
     pub f: usize,
+    pub node_bandwidth: usize,
     // entropy
     pub num_block_packet: usize,
     pub mesh: Vec<String>,
@@ -59,6 +61,7 @@ pub fn build(
         nodes: config.nodes.clone(),
         parameters: config.parameters,
         num_block_packet: config.num_block_packet,
+        node_bandwidth: config.node_bandwidth,
     };
     let app_context = app::Context::new(app_context_config, store.clone(), broadcast_api.upcall);
 
@@ -82,6 +85,7 @@ pub fn build(
         nodes: config.nodes.clone(),
         local_id: config.local_id,
         parameters: config.parameters,
+        node_bandwidth: config.node_bandwidth,
     };
     let glacier_context = glacier::Context::new(glacier_config, store.clone(), ring_api.upcall);
 
@@ -102,12 +106,15 @@ pub fn build(
     };
     let replication_context = replication::Context::new(replication_config, block_receiver);
 
+    let redirect_router = redirect::make_service();
+
     let router = Router::new()
         .nest("/entropy", app_router)
         .nest("/broadcast", broadcast_router)
         .nest("/glacier", glacier_router)
         .nest("/ring", ring_router)
-        .nest("/replication", replication_router);
+        .nest("/replication", replication_router)
+        .nest("/redirect", redirect_router);
     (
         router,
         app_context,
