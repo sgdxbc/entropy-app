@@ -227,15 +227,19 @@ async fn tput_loop_session(
         // &[(10, 10)][..]
     } else {
         &[
-            (10, 1),
-            (20, 2),
-            (50, 5),
-            (100, 10),
-            (100, 20),
-            (100, 40),
-            (100, 60),
-            (100, 80),
-            (100, 100),
+            // (10, 1),
+            // (20, 2),
+            // (50, 5),
+            // (100, 10),
+            // (100, 20),
+            // (100, 40),
+            // (100, 60),
+            // (100, 80),
+            (120, 120),
+            (140, 140),
+            (160, 160),
+            (180, 180),
+            (200, 200),
         ][..]
     } {
         reload(spec).await?;
@@ -352,7 +356,7 @@ async fn tput_session(
                 i < count
             } {
                 let put_url = nodes[i % nodes.len()].url();
-                println!("[{index:02}] put {put_url}");
+                println!("[{index:03}] put {put_url}");
                 let (block_id, _checksum, _verifying_key) = CLIENT
                     .post(format!("{}/{}/put", put_url, protocol.namespace()))
                     .send()
@@ -373,7 +377,7 @@ async fn tput_session(
                         .json::<Option<Duration>>()
                         .await?
                     {
-                        println!("[{index:02}] {latency:?}");
+                        println!("[{index:03}] {latency:?}");
                         break;
                     }
                 }

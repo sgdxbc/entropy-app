@@ -126,6 +126,14 @@ impl Block {
     pub fn id(&self) -> MerkleHash {
         self.root_certificate.0
     }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for (buf, _) in &self.chunks {
+            bytes.extend_from_slice(buf)
+        }
+        bytes
+    }
 }
 
 impl Packet {

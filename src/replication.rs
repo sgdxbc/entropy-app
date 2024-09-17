@@ -1,9 +1,10 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::BuildHasher as _,
+    mem::take,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -121,17 +122,26 @@ struct PutState {
 }
 
 struct GetState {
-    start: Instant,
-    end: Option<Instant>,
+    latency: Duration,
     checksum: u64,
+    redirect: bool,
+    block: Vec<u8>,
 }
 
-async fn benchmark_put(State(state): State<ServerState>) -> Response {
+async fn benchmark_put(
+    State(state): State<ServerState>,
+    redirect_block: axum::body::Bytes,
+) -> Response {
     if state.config.parameters.k != 1 {
         return StatusCode::IM_A_TEAPOT.into_response();
     }
-    let mut block = vec![0; state.config.parameters.chunk_size * state.config.parameters.k];
-    thread_rng().fill_bytes(&mut block);
+    let block = if redirect_block.is_empty() {
+        let mut block = vec![0; state.config.parameters.chunk_size * state.config.parameters.k];
+        thread_rng().fill_bytes(&mut block);
+        Bytes::from(block)
+    } else {
+        redirect_block
+    };
     let checksum = FxBuildHasher.hash_one(&block);
     let start = Instant::now();
     let put = PutState {
@@ -143,7 +153,7 @@ async fn benchmark_put(State(state): State<ServerState>) -> Response {
     state.put.lock().expect("can lock").insert(block_id, put);
     state
         .block_sender
-        .send((state.config.local_id, block_id, Bytes::from(block), true))
+        .send((state.config.local_id, block_id, block, true))
         .expect("can send");
     Json((format!("{block_id:?}"), checksum, [0; PUBLIC_KEY_LENGTH])).into_response()
 }
@@ -247,8 +257,18 @@ async fn ack_persistence(
     StatusCode::OK.into_response()
 }
 
+mod benchmark_get {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct QueryData {
+        pub redirect: Option<bool>,
+    }
+}
+
 async fn benchmark_get(
     State(state): State<ServerState>,
+    query: Query<benchmark_get::QueryData>,
     Json((block_id, _verifying_key)): Json<(String, [u8; PUBLIC_KEY_LENGTH])>,
 ) -> Response {
     let Ok(block_id) = block_id.parse::<MerkleHash>() else {
@@ -265,9 +285,10 @@ async fn benchmark_get(
     state.get.lock().expect("can lock").insert(
         block_id,
         GetState {
-            start,
-            end: Some(Instant::now()),
+            latency: start.elapsed(),
             checksum,
+            redirect: query.redirect.unwrap_or(false),
+            block,
         },
     );
     StatusCode::OK.into_response()
@@ -281,12 +302,11 @@ async fn poll_get(State(state): State<ServerState>, Path(block_id): Path<String>
     let Some(get) = get.get_mut(&block_id) else {
         return StatusCode::IM_A_TEAPOT.into_response();
     };
-    Json(if let Some(end) = get.end {
-        Some((end - get.start, get.checksum))
+    if !get.redirect {
+        Json(Some((get.latency, get.checksum))).into_response()
     } else {
-        None
-    })
-    .into_response()
+        take(&mut get.block).into_response()
+    }
 }
 
 pub fn make_service(config: ServiceConfig, block_sender: UnboundedSender<BlockMessage>) -> Router {

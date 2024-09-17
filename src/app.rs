@@ -9,7 +9,7 @@ use std::{
 };
 
 use axum::{
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -258,16 +258,27 @@ struct GetState {
     start: Instant,
     end: Option<Instant>,
     checksum: u64,
+    redirect: bool,
 }
 
-async fn benchmark_put(State(state): State<ServerState>) -> Response {
-    let chunks = repeat_with(|| {
-        let mut buf = vec![0; state.config.parameters.chunk_size];
-        thread_rng().fill_bytes(&mut buf);
-        Bytes::from(buf)
-    })
-    .take(state.config.parameters.k)
-    .collect::<Vec<_>>();
+async fn benchmark_put(State(state): State<ServerState>, block: axum::body::Bytes) -> Response {
+    let chunks = if block.is_empty() {
+        repeat_with(|| {
+            let mut buf = vec![0; state.config.parameters.chunk_size];
+            thread_rng().fill_bytes(&mut buf);
+            Bytes::from(buf)
+        })
+        .take(state.config.parameters.k)
+        .collect::<Vec<_>>()
+    } else {
+        if block.len() != state.config.parameters.chunk_size * state.config.parameters.k {
+            return StatusCode::IM_A_TEAPOT.into_response();
+        }
+        block
+            .chunks_exact(state.config.parameters.chunk_size)
+            .map(Bytes::copy_from_slice)
+            .collect()
+    };
     let checksum = FxBuildHasher.hash_one(&chunks);
     let start = Instant::now();
     let block = Block::new(chunks, &state.config.key);
@@ -378,8 +389,14 @@ async fn ack_persistence(
     StatusCode::OK.into_response()
 }
 
+#[derive(Deserialize)]
+struct QueryData {
+    redirect: Option<bool>,
+}
+
 async fn benchmark_get(
     State(state): State<ServerState>,
+    query: Query<QueryData>,
     Json((block_id, verifying_key)): Json<(String, [u8; PUBLIC_KEY_LENGTH])>,
 ) -> Response {
     let Ok(block_id) = block_id.parse::<MerkleHash>() else {
@@ -394,6 +411,7 @@ async fn benchmark_get(
         scratch: None,
         end: None,
         checksum: 0,
+        redirect: query.redirect.unwrap_or(false),
     };
     let replaced = state.get.lock().expect("can lock").insert(block_id, get);
     if replaced.is_some() {
@@ -420,12 +438,26 @@ async fn poll_get(State(state): State<ServerState>, Path(block_id): Path<String>
     let Some(get) = get.get_mut(&block_id) else {
         return StatusCode::IM_A_TEAPOT.into_response();
     };
-    Json(if let Some(end) = get.end {
-        Some((end - get.start, get.checksum))
+    if !get.redirect {
+        Json(if let Some(end) = get.end {
+            Some((end - get.start, get.checksum))
+        } else {
+            None
+        })
+        .into_response()
     } else {
-        None
-    })
-    .into_response()
+        if get.end.is_some() {
+            get.scratch
+                .take()
+                .expect("has scratch packet")
+                .recover(&state.config.parameters)
+                .expect("can recover")
+                .to_bytes()
+        } else {
+            Default::default()
+        }
+        .into_response()
+    }
 }
 
 async fn upload(
@@ -550,6 +582,7 @@ pub fn make_service(config: ServiceConfig, broadcast: UnboundedSender<Bytes>) ->
         .route("/get/:block_id", get(poll_get))
         .route("/upload/:block_id", post(upload))
         .route("/upload/:block_id/:index", post(upload_index))
+        .layer(DefaultBodyLimit::max(2 << 30))
         .with_state(ServerState {
             broadcast,
             packet_distr: PacketDistr::new(config.parameters.k).into(),
