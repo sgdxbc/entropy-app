@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
             node_bandwidth: (10 << 30) / 8,
             protocol: Replication,
             chunk_size: 1 << 30,
-            // chunk_size: 256 << 20,
+            // chunk_size: 1 << 20,
             k: 1,
             num_block_packet: 0,
             degree: 0,
@@ -98,6 +98,34 @@ async fn main() -> anyhow::Result<()> {
         session(entropy(3333), &command, deploy).await?;
         session(glacier(10000, 33), &command, deploy).await?
     }
+    if command.as_deref() == Some("scale-latency") {
+        let mut spec = entropy(3333);
+        for (f, num_block_packet) in [
+            (333, 100),
+            (667, 50),
+            (1000, 33),
+            (1333, 25),
+            (1667, 20),
+            // (2000, 16),
+            (2100, 16),
+            // (2333, 14),
+            (2400, 14),
+            // (2667, 12),
+            (2800, 12),
+            (3000, 11),
+        ] {
+            spec.f = f;
+            spec.n = 3 * f + 1;
+            spec.num_block_packet = num_block_packet;
+            session(spec.clone(), &command, deploy).await?;
+        }
+        let mut spec = glacier(10000, 33);
+        // for n in [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000] {
+        for n in [1000, 2000, 4000, 6000, 8000] {
+            spec.n = n;
+            session(spec.clone(), &command, deploy).await?
+        }
+    }
 
     Ok(())
 }
@@ -111,12 +139,13 @@ async fn session(
         anyhow::ensure!(spec.num_correct_packet() >= spec.k);
     }
     if spec.block_size() != 1 << 30
-        || spec.n
-            != if matches!(spec.protocol, Replication) {
-                100
-            } else {
-                10000
-            }
+        || (command.as_deref() != Some("scale-latency")
+            && spec.n
+                != if matches!(spec.protocol, Replication) {
+                    100
+                } else {
+                    10000
+                })
     {
         if deploy {
             anyhow::bail!("incorrect spec")
@@ -130,7 +159,7 @@ async fn session(
     let nodes = output.nodes().take(spec.n).collect::<Vec<_>>();
 
     let mut lines = String::new();
-    if command.as_deref() == Some("latency") {
+    if matches!(command.as_deref(), Some("latency" | "scale-latency")) {
         let mode = args().nth(2);
         let mode = match mode.as_deref() {
             Some("local") => LatencyMode::Local,
@@ -215,7 +244,15 @@ async fn latency_loop_session(
     let mut ok_session = pin!(ok_session(nodes));
 
     let mut lines = String::new();
-    for i in 0..if deploy { 10 } else { 3 } {
+    for i in 0..if deploy {
+        if matches!(spec.protocol, Protocol::Replication) {
+            10
+        } else {
+            30
+        }
+    } else {
+        3
+    } {
         let session = async {
             use LatencyMode::*;
             match mode {
@@ -297,7 +334,7 @@ async fn latency_session(
     let put_node = nodes
         .choose(&mut thread_rng())
         .ok_or(anyhow::format_err!("empty nodes"))?;
-    println!("put @ {}", put_node.url());
+    println!("put @ {} {:?}", put_node.url(), put_node.instance.region());
     let (block_id, checksum, verifying_key) = CLIENT
         .post(format!("{}/{namespace}/put", put_node.url()))
         .send()
@@ -325,7 +362,11 @@ async fn latency_session(
     let get_node = nodes
         .choose(&mut thread_rng())
         .ok_or(anyhow::format_err!("empty nodes"))?;
-    println!("get @ {} {block_id}", get_node.url());
+    println!(
+        "get @ {} {:?} {block_id}",
+        get_node.url(),
+        get_node.instance.region()
+    );
     loop {
         let response = CLIENT
             .post(format!("{}/{namespace}/get", get_node.url()))

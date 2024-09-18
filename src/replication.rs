@@ -36,6 +36,7 @@ type BlockMessage = (NodeId, H256, Bytes, bool);
 pub struct Context {
     config: ContextConfig,
     blocks: UnboundedReceiver<BlockMessage>,
+    nodes: Arc<NodeBook>,
 }
 
 pub struct ContextConfig {
@@ -44,8 +45,16 @@ pub struct ContextConfig {
 }
 
 impl Context {
-    pub fn new(config: ContextConfig, blocks: UnboundedReceiver<BlockMessage>) -> Self {
-        Self { config, blocks }
+    pub fn new(
+        config: ContextConfig,
+        blocks: UnboundedReceiver<BlockMessage>,
+        nodes: Arc<NodeBook>,
+    ) -> Self {
+        Self {
+            config,
+            blocks,
+            nodes,
+        }
     }
 
     pub async fn session(mut self) -> anyhow::Result<()> {
@@ -80,6 +89,9 @@ impl Context {
                 anyhow::ensure!(!self.config.regional_mesh.is_empty());
             }
             for url in &self.config.regional_mesh {
+                if *url == self.nodes[&node_id].url() {
+                    continue;
+                }
                 let url = url.clone();
                 let block = block.clone();
                 client_sessions.spawn(async move {
@@ -153,8 +165,12 @@ async fn benchmark_put(
     state.put.lock().expect("can lock").insert(block_id, put);
     state
         .block_sender
-        .send((state.config.local_id, block_id, block, true))
+        .send((state.config.local_id, block_id, block.clone(), true))
         .expect("can send");
+    let node_id = state.config.local_id;
+    save(state, block, block_id, node_id)
+        .await
+        .expect("can save");
     Json((format!("{block_id:?}"), checksum, [0; PUBLIC_KEY_LENGTH])).into_response()
 }
 

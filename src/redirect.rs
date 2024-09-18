@@ -34,6 +34,7 @@ async fn benchmark(Json(spec): Json<RedirectSpec>) -> Response {
     }
     .await
     .expect("can put");
+    eprintln!("put issued");
 
     while async {
         anyhow::Ok(
@@ -54,6 +55,7 @@ async fn benchmark(Json(spec): Json<RedirectSpec>) -> Response {
     }
 
     let put_latency = start.elapsed();
+    eprintln!("put done");
 
     sleep(Duration::from_secs(10)).await;
 
@@ -77,6 +79,7 @@ async fn benchmark(Json(spec): Json<RedirectSpec>) -> Response {
     .await
     .expect("can get");
     let start = Instant::now();
+    eprintln!("get issued");
 
     let mut get_block;
     while {
@@ -95,6 +98,7 @@ async fn benchmark(Json(spec): Json<RedirectSpec>) -> Response {
         .expect("can poll get");
         get_block.is_empty()
     } {}
+    eprintln!("get done");
 
     let get_latency = start.elapsed();
     assert_eq!(get_block, block);

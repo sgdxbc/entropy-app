@@ -261,9 +261,9 @@ async fn benchmark_put(State(state): State<ServerState>, block: axum::body::Byte
             .map(Bytes::copy_from_slice)
             .collect()
     };
-    let checksum = FxBuildHasher.hash_one(&chunks);
     let start = Instant::now();
     let block = Block::new(chunks, &state.config.key);
+    let checksum = FxBuildHasher.hash_one(block.to_bytes());
     let put = PutState {
         block: block.into(),
         start,

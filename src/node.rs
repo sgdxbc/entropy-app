@@ -104,7 +104,8 @@ pub fn build(
         regional_primaries: config.regional_primaries,
         regional_mesh: config.regional_mesh,
     };
-    let replication_context = replication::Context::new(replication_config, block_receiver);
+    let replication_context =
+        replication::Context::new(replication_config, block_receiver, config.nodes);
 
     let redirect_router = redirect::make_service();
 
